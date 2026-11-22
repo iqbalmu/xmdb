@@ -11,13 +11,11 @@ xmdb remove mydb                       # everything gone, volumes included
 
 ## Demo
 
-[![xmdb TUI demo](demo/hero.gif)](demo/tour.mp4)
+![xmdb TUI demo](demo/hero.gif)
 
-*The dashboard, the ER diagram, live SQL, and a one-keypress clone — filmed
-from a pinned build against the bundled e-commerce seed
-([examples/seed](examples/seed)). Click for the full tour
-([demo/tour.mp4](demo/tour.mp4)): dashboard → info → ERD → query → clone →
-lifecycle.*
+*Direct screenshots of the terminal UI: dashboard, connection card, live ER
+diagram, inline SQL, one-keypress clone, and start/stop — all against the
+bundled e-commerce seed in [examples/seed](examples/seed).*
 
 ## Why
 
