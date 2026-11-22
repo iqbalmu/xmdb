@@ -9,6 +9,16 @@ xmdb connect mydb                      # connection string when you need it
 xmdb remove mydb                       # everything gone, volumes included
 ```
 
+## Demo
+
+[![xmdb TUI demo](demo/hero.gif)](demo/tour.mp4)
+
+*The dashboard, the ER diagram, live SQL, and a one-keypress clone — filmed
+from a pinned build against the bundled e-commerce seed
+([examples/seed](examples/seed)). Click for the full tour
+([demo/tour.mp4](demo/tour.mp4)): dashboard → info → ERD → query → clone →
+lifecycle.*
+
 ## Why
 
 Spinning up a database for local development means remembering image names,
@@ -117,6 +127,10 @@ xmdb create
 # Scripted: postgres on a custom port in a group, optionally seeded
 xmdb create appdb --provider postgres --port 55432 -g work
 xmdb create appdb --provider postgres --seed ./migrations
+
+# Or start from the bundled example data (see examples/seed):
+xmdb create shopdb --provider postgres --seed examples/seed/ecommerce
+xmdb create analytics --provider mysql --seed examples/seed/analytics
 
 # Clone an existing database (schema + data) into a new instance
 xmdb clone appdb appdb_staging
