@@ -13,9 +13,10 @@ xmdb remove mydb                       # everything gone, volumes included
 
 ![xmdb TUI demo](demo/hero.gif)
 
-*Direct screenshots of the terminal UI: dashboard, connection card, live ER
-diagram, inline SQL, one-keypress clone, and start/stop — all against the
-bundled e-commerce seed in [examples/seed](examples/seed).*
+*Direct captures of the terminal UI: connection card with password reveal,
+live ER diagram and table list, inline SQL with results and CSV/JSON export,
+one-keypress clone, and start/stop — running against the bundled seeds in
+[examples/seed](examples/seed).*
 
 ## Why
 
@@ -72,7 +73,7 @@ sha256 checksum, and installs it. Defaults to `/usr/local/bin` (falls back to
 `~/.local/bin` without sudo access); both are overridable:
 
 ```sh
-XMDB_INSTALL_DIR=~/.local/bin VERSION=v1.0.0 sh install.sh
+XMDB_INSTALL_DIR=~/.local/bin VERSION=v1.4.0 sh install.sh
 ```
 
 Re-running the installer (or running `xmdb update`) upgrades to the latest release.
