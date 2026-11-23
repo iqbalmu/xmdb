@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -401,6 +402,54 @@ func (d *DockerManager) VolumeExists(ctx context.Context, name string) (bool, er
 // RemoveVolume deletes a named volume.
 func (d *DockerManager) RemoveVolume(ctx context.Context, name string) error {
 	return d.client.VolumeRemove(ctx, name, false)
+}
+
+// ManagedContainer summarizes a container discovered on the daemon.
+type ManagedContainer struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Status string `json:"status"`
+}
+
+// ListContainersByPrefix returns all containers (running or stopped) whose name
+// starts with prefix.
+func (d *DockerManager) ListContainersByPrefix(ctx context.Context, prefix string) ([]ManagedContainer, error) {
+	items, err := d.client.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	var out []ManagedContainer
+	for _, c := range items {
+		for _, rawName := range c.Names {
+			name := strings.TrimPrefix(rawName, "/")
+			if strings.HasPrefix(name, prefix) {
+				out = append(out, ManagedContainer{
+					ID:     c.ID,
+					Name:   name,
+					State:  c.State,
+					Status: c.Status,
+				})
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ListVolumesByPrefix returns all volume names starting with prefix.
+func (d *DockerManager) ListVolumesByPrefix(ctx context.Context, prefix string) ([]string, error) {
+	resp, err := d.client.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, v := range resp.Volumes {
+		if v != nil && strings.HasPrefix(v.Name, prefix) {
+			out = append(out, v.Name)
+		}
+	}
+	return out, nil
 }
 
 type ContainerConfig struct {

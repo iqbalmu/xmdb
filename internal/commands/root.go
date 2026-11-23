@@ -51,6 +51,7 @@ func init() {
 	rootCmd.AddCommand(shellCmd)
 	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(connectCmd)
+	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(updateCmd)
 }
 
