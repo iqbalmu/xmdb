@@ -73,7 +73,7 @@ sha256 checksum, and installs it. Defaults to `/usr/local/bin` (falls back to
 `~/.local/bin` without sudo access); both are overridable:
 
 ```sh
-XMDB_INSTALL_DIR=~/.local/bin VERSION=v1.4.0 sh install.sh
+XMDB_INSTALL_DIR=~/.local/bin VERSION=v1.5.0 sh install.sh
 ```
 
 Re-running the installer (or running `xmdb update`) upgrades to the latest release.
@@ -199,6 +199,7 @@ Running `xmdb` without arguments opens the terminal dashboard:
 | `xmdb restore <name> <file> [-f]` | Restore from a `.sql` file (prompts before overwriting) |
 | `xmdb table list <name>` / `xmdb table describe <name> <table>` | Inspect tables |
 | `xmdb provider list` | Show supported providers and defaults |
+| `xmdb doctor [--fix] [-f] [--json]` | Check container runtime, orphan resources, stale states, and port conflicts |
 | `xmdb config init/show/path` | Manage `~/.xmdb/config.yaml` |
 | `xmdb update` | Update `xmdb` to the latest release |
 | `xmdb version` | Version information |

@@ -24,14 +24,14 @@ func rollbackProvisionedDatabase(ctx context.Context, stateMgr *state.Manager, d
 	service.RollbackProvisionedDatabase(ctx, runtimeMode, stateMgr, dbState)
 }
 
-func dbNameValidator(m *state.Manager) func(string) error  { return service.DBNameValidator(m) }
-func portValidator(m *state.Manager) func(string) error    { return service.PortValidator(m) }
-func versionValidator(s string) error                      { return service.VersionValidator(s) }
-func identifierValidator(s string) error                   { return service.IdentifierValidator(s) }
-func requiredText(s string) error                          { return service.RequiredText(s) }
-func groupValidator(s string) error                        { return service.GroupValidator(s) }
-func nextFreePort(m *state.Manager, start int) int         { return service.NextFreePort(m, start) }
-func knownGroups(m *state.Manager) []string                { return service.KnownGroups(m) }
+func dbNameValidator(m *state.Manager) func(string) error { return service.DBNameValidator(m) }
+func portValidator(m *state.Manager) func(string) error   { return service.PortValidator(m) }
+func versionValidator(s string) error                     { return service.VersionValidator(s) }
+func identifierValidator(s string) error                  { return service.IdentifierValidator(s) }
+func requiredText(s string) error                         { return service.RequiredText(s) }
+func groupValidator(s string) error                       { return service.GroupValidator(s) }
+func nextFreePort(m *state.Manager, start int) int        { return service.NextFreePort(m, start) }
+func knownGroups(m *state.Manager) []string               { return service.KnownGroups(m) }
 func portAvailabilityRows(m *state.Manager, d, s int) []string {
 	return service.PortAvailabilityRows(m, d, s)
 }
