@@ -1,4 +1,4 @@
-package commands
+package tui
 
 import (
 	"fmt"
@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/iqbalmu/xmdb/internal/service"
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
@@ -77,11 +78,17 @@ type msgClearToast struct {
 }
 
 type shellExecCmd struct {
-	name string
+	name      string
+	openShell func(string) error
 }
 
 func (s shellExecCmd) Run() error {
-	err := runShell(s.name)
+	var err error
+	if s.openShell == nil {
+		err = fmt.Errorf("shell runner not configured")
+	} else {
+		err = s.openShell(s.name)
+	}
 	if err != nil {
 		fmt.Printf("\nShell error: %v\nPress Enter to return to dashboard...", err)
 		var dummy string
@@ -94,6 +101,9 @@ func (s shellExecCmd) SetStdout(io.Writer) {}
 func (s shellExecCmd) SetStderr(io.Writer) {}
 
 type dashboardModel struct {
+	runtimeMode string
+	openShell   func(string) error
+
 	width  int
 	height int
 
@@ -229,7 +239,7 @@ func newDashboardModel() dashboardModel {
 func (m dashboardModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
-		loadDatabasesCmd(),
+		loadDatabasesCmd(m.runtimeMode),
 		tickCmd(),
 	)
 }
@@ -256,7 +266,7 @@ func matchesDBFilter(e dbEntry, query string) bool {
 		return true
 	}
 	name := strings.ToLower(e.db.Name)
-	group := strings.ToLower(groupLabel(e.db.Group))
+	group := strings.ToLower(service.GroupLabel(e.db.Group))
 	provider := strings.ToLower(e.db.Provider)
 	port := fmt.Sprintf("%d", e.db.Port)
 	status := "stopped"
@@ -349,7 +359,7 @@ func (m *dashboardModel) applyFilter() {
 func (m *dashboardModel) rebuildRows() {
 	grouped := make(map[string][]dbEntry)
 	for _, e := range m.filtered {
-		g := groupLabel(e.db.Group)
+		g := service.GroupLabel(e.db.Group)
 		grouped[g] = append(grouped[g], e)
 	}
 
@@ -540,7 +550,7 @@ func (m dashboardModel) selectedRow() *listRow {
 func (m dashboardModel) groupEntries(group string) []dbEntry {
 	var out []dbEntry
 	for _, e := range m.filtered {
-		if groupLabel(e.db.Group) == group {
+		if service.GroupLabel(e.db.Group) == group {
 			out = append(out, e)
 		}
 	}
@@ -637,14 +647,14 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case msgTick:
-		return m, tea.Batch(loadDatabasesCmd(), tickCmd())
+		return m, tea.Batch(loadDatabasesCmd(m.runtimeMode), tickCmd())
 
 	case msgDatabasesLoaded:
 		m.busy = ""
 		m.dockerErr = msg.dockerErr
 		m.entries = msg.entries
 		m.applyFilter()
-		return m, loadDetailCmd(m.selected(), m.activeTab)
+		return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 
 	case msgDetailLoaded:
 		if sel := m.selected(); sel != nil && sel.db.Name == msg.name && m.activeTab == msg.tab {
@@ -693,7 +703,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if msg.toast != "" {
 			toastCmd = m.setToast(msg.toast, false)
 		}
-		return m, tea.Batch(toastCmd, loadDatabasesCmd())
+		return m, tea.Batch(toastCmd, loadDatabasesCmd(m.runtimeMode))
 
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -712,11 +722,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.ToLower(msg.String()) == "y" && sel != nil {
 				if mode == "remove" {
 					m.busy = fmt.Sprintf("Removing '%s'...", sel.db.Name)
-					return m, tea.Batch(m.spinner.Tick, removeDBCmd(*sel))
+					return m, tea.Batch(m.spinner.Tick, removeDBCmd(m.runtimeMode, *sel))
 				}
 				if mode == "reset" {
 					m.busy = fmt.Sprintf("Resetting '%s'...", sel.db.Name)
-					return m, tea.Batch(m.spinner.Tick, resetDBCmd(*sel))
+					return m, tea.Batch(m.spinner.Tick, resetDBCmd(m.runtimeMode, *sel))
 				}
 			}
 			return m, m.setToast("Cancelled", false)
@@ -730,11 +740,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterInput.SetValue("")
 				m.filterInput.Blur()
 				m.applyFilter()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			case "enter":
 				m.filtering = false
 				m.filterInput.Blur()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
@@ -897,19 +907,19 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab", "]":
 		if m.focusPane == 1 {
 			m.activeTab = (m.activeTab + 1) % tabCount
-			return m, loadDetailCmd(m.selected(), m.activeTab)
+			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
 	case "shift+tab", "[":
 		if m.focusPane == 1 {
 			m.activeTab = (m.activeTab + tabCount - 1) % tabCount
-			return m, loadDetailCmd(m.selected(), m.activeTab)
+			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
 	case "1", "2", "3", "4":
 		if m.focusPane == 1 {
 			m.activeTab = int(msg.String()[0] - '1')
-			return m, loadDetailCmd(m.selected(), m.activeTab)
+			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
 	case "/":
@@ -963,7 +973,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(m.filterInput.Value()) != "" {
 			m.filterInput.SetValue("")
 			m.applyFilter()
-			return m, loadDetailCmd(m.selected(), m.activeTab)
+			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
 	case "up", "k":
@@ -972,7 +982,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 		} else {
 			return m.scrollRight(-1)
@@ -984,7 +994,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor++
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 		} else {
 			return m.scrollRight(1)
@@ -1172,7 +1182,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		m.busy = "Refreshing..."
-		return m, tea.Batch(m.spinner.Tick, loadDatabasesCmd())
+		return m, tea.Batch(m.spinner.Tick, loadDatabasesCmd(m.runtimeMode))
 
 	case "s":
 		if m.focusPane != 0 || m.busy != "" {
@@ -1182,7 +1192,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			entries := m.groupEntries(row.group)
 			if len(entries) > 0 {
 				m.busy = fmt.Sprintf("Toggling group '%s'...", row.group)
-				return m, tea.Batch(m.spinner.Tick, toggleGroupCmd(row.group, entries))
+				return m, tea.Batch(m.spinner.Tick, toggleGroupCmd(m.runtimeMode, row.group, entries))
 			}
 		}
 		if sel := m.selected(); sel != nil {
@@ -1191,7 +1201,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.busy = fmt.Sprintf("Starting '%s'...", sel.db.Name)
 			}
-			return m, tea.Batch(m.spinner.Tick, toggleDBCmd(*sel))
+			return m, tea.Batch(m.spinner.Tick, toggleDBCmd(m.runtimeMode, *sel))
 		}
 
 	case "Q":
@@ -1266,8 +1276,8 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !sel.running {
 				return m, m.setToast(fmt.Sprintf("'%s' is stopped — press 's' to start it first", sel.db.Name), true)
 			}
-			return m, tea.Exec(shellExecCmd{name: sel.db.Name}, func(err error) tea.Msg {
-				return loadDatabasesCmd()()
+			return m, tea.Exec(shellExecCmd{name: sel.db.Name, openShell: m.openShell}, func(err error) tea.Msg {
+				return loadDatabasesCmd(m.runtimeMode)()
 			})
 		}
 
@@ -1424,7 +1434,7 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 			return m, nil
 		}
@@ -1440,7 +1450,7 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.cursor++
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 			return m, nil
 		}
@@ -1472,7 +1482,7 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.cursor = idx
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
-				return m, loadDetailCmd(m.selected(), m.activeTab)
+				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 			return m, nil
 		}
@@ -1491,7 +1501,7 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				tabIdx := relX / 13
 				if tabIdx >= 0 && tabIdx < tabCount {
 					m.activeTab = tabIdx
-					return m, loadDetailCmd(m.selected(), m.activeTab)
+					return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 				}
 			}
 			return m, nil

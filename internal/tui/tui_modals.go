@@ -1,4 +1,4 @@
-package commands
+package tui
 
 import (
 	"fmt"
@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/iqbalmu/xmdb/internal/service"
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
@@ -308,7 +309,7 @@ func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.setToast("Backup path cannot be empty", true)
 			}
 			m.busy = fmt.Sprintf("Backing up '%s'...", sel.db.Name)
-			return m, tea.Batch(m.spinner.Tick, backupDBCmd(sel.db.Name, outPath))
+			return m, tea.Batch(m.spinner.Tick, backupDBCmd(m.runtimeMode, sel.db.Name, outPath))
 		}
 		var cmd tea.Cmd
 		m.backupInput, cmd = m.backupInput.Update(msg)
@@ -323,7 +324,7 @@ func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.modal = modalNone
 				if sel != nil {
 					m.busy = fmt.Sprintf("Restoring '%s'...", sel.db.Name)
-					return m, tea.Batch(m.spinner.Tick, restoreDBCmd(sel.db.Name, path))
+					return m, tea.Batch(m.spinner.Tick, restoreDBCmd(m.runtimeMode, sel.db.Name, path))
 				}
 				return m, nil
 			}
@@ -401,7 +402,7 @@ func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.setToast("Create cancelled", false)
 		}
 		if cm.done {
-			opts := createOptions{
+			opts := service.CreateOptions{
 				Name:         cm.dbName,
 				Provider:     cm.provider,
 				Version:      cm.version,
@@ -417,7 +418,7 @@ func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modal = modalNone
 			m.createWizard = nil
 			m.busy = fmt.Sprintf("Creating '%s' (%s)...", opts.Name, opts.Provider)
-			return m, tea.Batch(m.spinner.Tick, createDBCmd(opts))
+			return m, tea.Batch(m.spinner.Tick, createDBCmd(m.runtimeMode, opts))
 		}
 		return m, cmd
 
@@ -438,13 +439,13 @@ func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cloneState.errMsg = err.Error()
 				return m, nil
 			}
-			if err := dbNameValidator(stateMgr)(targetName); err != nil {
+			if err := service.DBNameValidator(stateMgr)(targetName); err != nil {
 				m.cloneState.errMsg = err.Error()
 				return m, nil
 			}
 			m.modal = modalNone
 			m.busy = fmt.Sprintf("Cloning '%s' -> '%s'...", sel.db.Name, targetName)
-			return m, tea.Batch(m.spinner.Tick, cloneDBCmd(cloneOptions{
+			return m, tea.Batch(m.spinner.Tick, cloneDBCmd(m.runtimeMode, service.CloneOptions{
 				SourceName: sel.db.Name,
 				TargetName: targetName,
 				WithVolume: true,

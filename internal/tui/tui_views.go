@@ -1,4 +1,4 @@
-package commands
+package tui
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/iqbalmu/xmdb/internal/service"
 )
 
 func (m *dashboardModel) renderTableOverviewToVP() {
@@ -311,7 +312,7 @@ func (m dashboardModel) renderInfoTab(e *dbEntry) string {
 	rows := [][2]string{
 		{"Name", db.Name},
 		{"Provider", fmt.Sprintf("%s (%s)", db.Provider, db.Version)},
-		{"Group", groupLabel(db.Group)},
+		{"Group", service.GroupLabel(db.Group)},
 		{"Status", statusStr},
 		{"Port", fmt.Sprintf("127.0.0.1:%d", db.Port)},
 		{"Database", db.DatabaseName},
@@ -496,9 +497,13 @@ func (m dashboardModel) footerHelpText() string {
 	}
 }
 
-func runDashboardTUI() {
+// RunDashboard launches the interactive TUI dashboard.
+func RunDashboard(runtimeMode string, openShell func(string) error) {
+	m := newDashboardModel()
+	m.runtimeMode = runtimeMode
+	m.openShell = openShell
 	p := tea.NewProgram(
-		newDashboardModel(),
+		m,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

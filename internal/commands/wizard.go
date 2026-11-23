@@ -5,6 +5,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/iqbalmu/xmdb/internal/state"
+	"github.com/iqbalmu/xmdb/internal/tui"
 )
 
 // navResult reports how a menu or action was left.
@@ -23,7 +24,7 @@ type wizardAction struct {
 // runWizard launches the interactive split-pane TUI dashboard when `xmdb` is
 // invoked with no arguments.
 func runWizard() {
-	runDashboardTUI()
+	tui.RunDashboard(runtimeMode, runShell)
 }
 
 func runWizardLegacy() {

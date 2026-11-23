@@ -1,4 +1,4 @@
-package commands
+package tui
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
-func loadDatabasesCmd() tea.Cmd {
+func loadDatabasesCmd(runtimeMode string) tea.Cmd {
 	return func() tea.Msg {
 		stateMgr, err := state.NewManager()
 		if err != nil {
@@ -36,7 +36,7 @@ func loadDatabasesCmd() tea.Cmd {
 			}
 			connStr := ""
 			if prov, err := providers.For(db.Provider); err == nil {
-				connStr = prov.GetConnectionString(connectionConfig(db))
+				connStr = prov.GetConnectionString(service.ConnectionConfig(db))
 			}
 			entries = append(entries, dbEntry{
 				db:      db,
@@ -48,7 +48,7 @@ func loadDatabasesCmd() tea.Cmd {
 	}
 }
 
-func loadDetailCmd(entry *dbEntry, tab int) tea.Cmd {
+func loadDetailCmd(runtimeMode string, entry *dbEntry, tab int) tea.Cmd {
 	if entry == nil || (tab != 1 && tab != 2) {
 		return nil
 	}
@@ -106,7 +106,7 @@ func runQuickSQLCmd(db *state.Database, query string) tea.Cmd {
 	}
 }
 
-func toggleDBCmd(entry dbEntry) tea.Cmd {
+func toggleDBCmd(runtimeMode string, entry dbEntry) tea.Cmd {
 	return func() tea.Msg {
 		dockerMgr, err := container.NewDockerManager(runtimeMode)
 		if err != nil {
@@ -126,7 +126,7 @@ func toggleDBCmd(entry dbEntry) tea.Cmd {
 	}
 }
 
-func toggleGroupCmd(group string, entries []dbEntry) tea.Cmd {
+func toggleGroupCmd(runtimeMode, group string, entries []dbEntry) tea.Cmd {
 	return func() tea.Msg {
 		dockerMgr, err := container.NewDockerManager(runtimeMode)
 		if err != nil {
@@ -161,7 +161,7 @@ func toggleGroupCmd(group string, entries []dbEntry) tea.Cmd {
 	}
 }
 
-func removeDBCmd(entry dbEntry) tea.Cmd {
+func removeDBCmd(runtimeMode string, entry dbEntry) tea.Cmd {
 	return func() tea.Msg {
 		stateMgr, err := state.NewManager()
 		if err != nil {
@@ -186,7 +186,7 @@ func removeDBCmd(entry dbEntry) tea.Cmd {
 	}
 }
 
-func resetDBCmd(entry dbEntry) tea.Cmd {
+func resetDBCmd(runtimeMode string, entry dbEntry) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := service.ResetDatabase(context.Background(), runtimeMode, entry.db.Name, nil); err != nil {
 			return msgActionDone{err: err}
@@ -195,9 +195,9 @@ func resetDBCmd(entry dbEntry) tea.Cmd {
 	}
 }
 
-func backupDBCmd(name, outPath string) tea.Cmd {
+func backupDBCmd(runtimeMode, name, outPath string) tea.Cmd {
 	return func() tea.Msg {
-		absPath, sizeBytes, _, err := backupDatabase(context.Background(), name, outPath)
+		absPath, sizeBytes, _, err := service.BackupDatabase(context.Background(), runtimeMode, name, outPath)
 		if err != nil {
 			return msgActionDone{err: err}
 		}
@@ -206,9 +206,9 @@ func backupDBCmd(name, outPath string) tea.Cmd {
 	}
 }
 
-func restoreDBCmd(name, filePath string) tea.Cmd {
+func restoreDBCmd(runtimeMode, name, filePath string) tea.Cmd {
 	return func() tea.Msg {
-		absPath, _, _, err := restoreDatabase(context.Background(), name, filePath, io.Discard)
+		absPath, _, _, err := service.RestoreDatabase(context.Background(), runtimeMode, name, filePath, io.Discard)
 		if err != nil {
 			return msgActionDone{err: err}
 		}
@@ -216,13 +216,13 @@ func restoreDBCmd(name, filePath string) tea.Cmd {
 	}
 }
 
-func createDBCmd(opts createOptions) tea.Cmd {
+func createDBCmd(runtimeMode string, opts service.CreateOptions) tea.Cmd {
 	return func() tea.Msg {
 		stateMgr, err := state.NewManager()
 		if err != nil {
 			return msgActionDone{err: err}
 		}
-		_, _, seededCount, err := provisionAndSeedDatabase(context.Background(), stateMgr, opts, nil)
+		_, _, seededCount, err := service.ProvisionAndSeedDatabase(context.Background(), runtimeMode, stateMgr, opts, nil)
 		if err != nil {
 			return msgActionDone{err: err}
 		}
@@ -233,13 +233,13 @@ func createDBCmd(opts createOptions) tea.Cmd {
 	}
 }
 
-func cloneDBCmd(opts cloneOptions) tea.Cmd {
+func cloneDBCmd(runtimeMode string, opts service.CloneOptions) tea.Cmd {
 	return func() tea.Msg {
 		stateMgr, err := state.NewManager()
 		if err != nil {
 			return msgActionDone{err: err}
 		}
-		target, _, err := cloneDatabase(context.Background(), stateMgr, opts, nil)
+		target, _, err := service.CloneDatabase(context.Background(), runtimeMode, stateMgr, opts, nil)
 		if err != nil {
 			return msgActionDone{err: err}
 		}

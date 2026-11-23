@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iqbalmu/xmdb/internal/state"
 	"github.com/iqbalmu/xmdb/pkg/utils"
 )
@@ -124,36 +123,4 @@ func TestCloneDatabase_Validation(t *testing.T) {
 	}
 }
 
-func TestCreateModel_SeedStepAndCloneModal(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	mgr, err := state.NewManager()
-	if err != nil {
-		t.Fatalf("state.NewManager() error = %v", err)
-	}
-
-	cm := newCreateModel(mgr)
-	cm.step = stepSeed
-	cm.prepareStep()
-
-	// Empty seed path skips cleanly to review.
-	next, _ := cm.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	cm = next.(createModel)
-	if cm.step != stepReview {
-		t.Fatalf("step = %d, want stepReview (%d)", cm.step, stepReview)
-	}
-
-	// Non-existent seed path shows validation error and stays on stepSeed.
-	cm.step = stepSeed
-	cm.prepareStep()
-	cm.input.SetValue("/nonexistent/seed.sql")
-	next, _ = cm.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	cm = next.(createModel)
-	if cm.step != stepSeed || cm.validationErr == "" {
-		t.Fatalf("expected validationErr on stepSeed, got step=%d err=%q", cm.step, cm.validationErr)
-	}
-
-	cloneSt := newCloneModalState("appdb")
-	if got := cloneSt.input.Value(); got != "appdb_copy" {
-		t.Fatalf("newCloneModalState value = %q, want %q", got, "appdb_copy")
-	}
-}
+// TUI createModel & cloneModal tests live in internal/tui/tui_test.go.

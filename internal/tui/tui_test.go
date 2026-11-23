@@ -1,4 +1,4 @@
-package commands
+package tui
 
 import (
 	"strings"
@@ -533,5 +533,39 @@ func TestDynamicPaneKeybinds(t *testing.T) {
 	m.activeTab = 3
 	if !strings.Contains(m.footerHelpText(), "[Query]") {
 		t.Fatalf("expected [Query] footer, got: %s", m.footerHelpText())
+	}
+}
+
+func TestCreateModel_SeedStepAndCloneModal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	mgr, err := state.NewManager()
+	if err != nil {
+		t.Fatalf("state.NewManager() error = %v", err)
+	}
+
+	cm := newCreateModel(mgr)
+	cm.step = stepSeed
+	cm.prepareStep()
+
+	// Empty seed path skips cleanly to review.
+	next, _ := cm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	cm = next.(createModel)
+	if cm.step != stepReview {
+		t.Fatalf("step = %d, want stepReview (%d)", cm.step, stepReview)
+	}
+
+	// Non-existent seed path shows validation error and stays on stepSeed.
+	cm.step = stepSeed
+	cm.prepareStep()
+	cm.input.SetValue("/nonexistent/seed.sql")
+	next, _ = cm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	cm = next.(createModel)
+	if cm.step != stepSeed || cm.validationErr == "" {
+		t.Fatalf("expected validationErr on stepSeed, got step=%d err=%q", cm.step, cm.validationErr)
+	}
+
+	cloneSt := newCloneModalState("appdb")
+	if got := cloneSt.input.Value(); got != "appdb_copy" {
+		t.Fatalf("newCloneModalState value = %q, want %q", got, "appdb_copy")
 	}
 }

@@ -1,4 +1,4 @@
-package commands
+package tui
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/iqbalmu/xmdb/internal/providers"
+	"github.com/iqbalmu/xmdb/internal/service"
 	"github.com/iqbalmu/xmdb/internal/state"
 	"github.com/iqbalmu/xmdb/pkg/utils"
 )
@@ -17,6 +18,21 @@ const (
 	createOptionCustomVersion = "Other (enter tag manually)"
 	createOptionGlobalGroup   = "Global (no group)"
 	createOptionNewGroup      = "New group..."
+)
+
+const (
+	stepName = iota
+	stepProvider
+	stepVersion
+	stepPort
+	stepGroup
+	stepRootPassword
+	stepAskUser
+	stepUsername
+	stepUserPassword
+	stepSeed
+	stepReview
+	stepDone
 )
 
 type createModel struct {
@@ -60,7 +76,7 @@ func newCreateModel(stateMgr *state.Manager) createModel {
 		stateMgr: stateMgr,
 		step:     stepName,
 		provider: utils.ProviderMySQL,
-		username: defaultUsername,
+		username: service.DefaultUsername,
 		input:    ti,
 		width:    72,
 	}
@@ -117,8 +133,8 @@ func (m *createModel) prepareStep() {
 		if m.provider == utils.ProviderPostgres {
 			m.defaultPort = providers.DefaultPostgresPort
 		}
-		m.suggestPort = nextFreePort(m.stateMgr, m.defaultPort)
-		m.portHints = portAvailabilityRows(m.stateMgr, m.defaultPort, m.suggestPort)
+		m.suggestPort = service.NextFreePort(m.stateMgr, m.defaultPort)
+		m.portHints = service.PortAvailabilityRows(m.stateMgr, m.defaultPort, m.suggestPort)
 		defStr := strconv.Itoa(m.suggestPort)
 		if m.port != 0 {
 			defStr = strconv.Itoa(m.port)
@@ -129,7 +145,7 @@ func (m *createModel) prepareStep() {
 
 	case stepGroup:
 		m.options = append(m.options, createOptionGlobalGroup)
-		existing := knownGroups(m.stateMgr)
+		existing := service.KnownGroups(m.stateMgr)
 		m.options = append(m.options, existing...)
 		m.options = append(m.options, createOptionNewGroup)
 		if m.group != "" {
@@ -154,8 +170,8 @@ func (m *createModel) prepareStep() {
 		}
 
 	case stepUsername:
-		m.input.Placeholder = defaultUsername
-		if m.username != "" && m.username != defaultUsername {
+		m.input.Placeholder = service.DefaultUsername
+		if m.username != "" && m.username != service.DefaultUsername {
 			m.input.SetValue(m.username)
 		}
 		m.input.Focus()
@@ -247,7 +263,7 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.step {
 	case stepName:
 		val := strings.TrimSpace(m.input.Value())
-		if err := dbNameValidator(m.stateMgr)(val); err != nil {
+		if err := service.DBNameValidator(m.stateMgr)(val); err != nil {
 			m.validationErr = err.Error()
 			return m, nil
 		}
@@ -268,7 +284,7 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 	case stepVersion:
 		if m.customMode {
 			val := strings.TrimSpace(m.input.Value())
-			if err := versionValidator(val); err != nil {
+			if err := service.VersionValidator(val); err != nil {
 				m.validationErr = err.Error()
 				return m, nil
 			}
@@ -294,7 +310,7 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 		if val == "" {
 			val = m.input.Placeholder
 		}
-		if err := portValidator(m.stateMgr)(val); err != nil {
+		if err := service.PortValidator(m.stateMgr)(val); err != nil {
 			m.validationErr = err.Error()
 			return m, nil
 		}
@@ -306,7 +322,7 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 	case stepGroup:
 		if m.customMode {
 			val := strings.TrimSpace(m.input.Value())
-			if err := groupValidator(val); err != nil {
+			if err := service.GroupValidator(val); err != nil {
 				m.validationErr = err.Error()
 				return m, nil
 			}
@@ -355,7 +371,7 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.username == "" {
-			m.username = defaultUsername
+			m.username = service.DefaultUsername
 		}
 		m.step = stepUsername
 		m.prepareStep()
@@ -363,9 +379,9 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 	case stepUsername:
 		val := strings.TrimSpace(m.input.Value())
 		if val == "" {
-			val = defaultUsername
+			val = service.DefaultUsername
 		}
-		if err := identifierValidator(val); err != nil {
+		if err := service.IdentifierValidator(val); err != nil {
 			m.validationErr = err.Error()
 			return m, nil
 		}
@@ -390,7 +406,7 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 	case stepSeed:
 		val := strings.TrimSpace(m.input.Value())
 		if val != "" {
-			if _, err := collectSeedFiles(val); err != nil {
+			if _, err := service.CollectSeedFiles(val); err != nil {
 				m.validationErr = err.Error()
 				return m, nil
 			}
@@ -448,7 +464,7 @@ func (m createModel) renderSummaryGrid(innerWidth int) string {
 		pairs = append(pairs, [2]string{"Port", fmt.Sprintf("127.0.0.1:%d", m.port)})
 	}
 	if m.step > stepGroup {
-		pairs = append(pairs, [2]string{"Group", groupLabel(m.group)})
+		pairs = append(pairs, [2]string{"Group", service.GroupLabel(m.group)})
 	}
 	if m.step > stepRootPassword {
 		pairs = append(pairs, [2]string{"Root Pass", "••••••••"})
@@ -457,7 +473,7 @@ func (m createModel) renderSummaryGrid(innerWidth int) string {
 		if m.createUser {
 			u := m.username
 			if u == "" {
-				u = defaultUsername
+				u = service.DefaultUsername
 			}
 			pairs = append(pairs, [2]string{"Dev User", u})
 		} else {
@@ -586,7 +602,7 @@ func (m createModel) stepPromptTitle() string {
 	case stepAskUser:
 		return "Create a dedicated dev user?"
 	case stepUsername:
-		return fmt.Sprintf("Dev username (default %s):", defaultUsername)
+		return fmt.Sprintf("Dev username (default %s):", service.DefaultUsername)
 	case stepUserPassword:
 		return fmt.Sprintf("Password for '%s':", m.username)
 	case stepSeed:
@@ -597,8 +613,8 @@ func (m createModel) stepPromptTitle() string {
 	return ""
 }
 
-// runCreateTUI launches the Bubble Tea interactive create flow.
-func runCreateTUI(stateMgr *state.Manager) (dbName, provider, version string, port int, group, rootPassword string, createUser bool, username, userPassword, seedPath string, ok bool) {
+// RunCreateTUI launches the Bubble Tea interactive create flow.
+func RunCreateTUI(stateMgr *state.Manager) (dbName, provider, version string, port int, group, rootPassword string, createUser bool, username, userPassword, seedPath string, ok bool) {
 	p := tea.NewProgram(newCreateModel(stateMgr))
 	res, err := p.Run()
 	if err != nil {

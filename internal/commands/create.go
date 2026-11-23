@@ -8,6 +8,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
+	"github.com/iqbalmu/xmdb/internal/tui"
 	"github.com/iqbalmu/xmdb/pkg/utils"
 	"github.com/spf13/cobra"
 )
@@ -169,7 +170,7 @@ func promptCreate(
 	createUser *bool,
 	username, userPassword, seedPath *string,
 ) bool {
-	n, p, v, pt, grp, rp, cu, u, up, sp, ok := runCreateTUI(stateMgr)
+	n, p, v, pt, grp, rp, cu, u, up, sp, ok := tui.RunCreateTUI(stateMgr)
 	if !ok {
 		return false
 	}
