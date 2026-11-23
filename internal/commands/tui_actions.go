@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/iqbalmu/xmdb/internal/container"
 	"github.com/iqbalmu/xmdb/internal/providers"
+	"github.com/iqbalmu/xmdb/internal/service"
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
@@ -187,9 +188,7 @@ func removeDBCmd(entry dbEntry) tea.Cmd {
 
 func resetDBCmd(entry dbEntry) tea.Cmd {
 	return func() tea.Msg {
-		resetForce = true
-		defer func() { resetForce = false }()
-		if err := runReset(entry.db.Name); err != nil {
+		if _, err := service.ResetDatabase(context.Background(), runtimeMode, entry.db.Name, nil); err != nil {
 			return msgActionDone{err: err}
 		}
 		return msgActionDone{toast: fmt.Sprintf("Reset '%s' complete", entry.db.Name)}
