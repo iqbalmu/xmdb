@@ -103,8 +103,14 @@ func (m *dashboardModel) renderQueryResultToVP() {
 		return
 	}
 	w := max(24, m.queryVP.Width)
-	header := styleMutedText.Render(fmt.Sprintf("%d row(s) returned in %s (max 200 shown)", len(m.queryResult.rows), dur))
-	m.queryVP.SetContent(header + "\n\n" + formatCompactTable(m.queryResult.cols, m.queryResult.rows, w))
+	tableStr, totalW := formatCompactTableWithOffset(m.queryResult.cols, m.queryResult.rows, w, m.queryXOffset)
+	m.queryTotalW = totalW
+	scrollInfo := ""
+	if totalW > w {
+		scrollInfo = fmt.Sprintf("  •  col offset %d (Shift+←/→ or </> to scroll, 0 to reset)", m.queryXOffset)
+	}
+	header := styleMutedText.Render(fmt.Sprintf("%d row(s) returned in %s (max 200 shown)%s", len(m.queryResult.rows), dur, scrollInfo))
+	m.queryVP.SetContent(header + "\n\n" + tableStr)
 	m.queryVP.GotoTop()
 }
 
@@ -253,11 +259,19 @@ func (m dashboardModel) renderRightPane(width, height int) string {
 	}
 
 	if row := m.selectedRow(); row != nil && row.isGroup {
-		content := tabBar + "\n\n" +
-			styleGroupHeader.Render("Group: "+row.group) + "\n\n" +
-			fmt.Sprintf("Databases: %d (%d running)\n\n", row.count, row.runningCount) +
-			styleMutedText.Render("Enter/Space: expand/collapse  •  s: start/stop all in group")
-		return paneStyle.Width(width).Height(height).Render(content)
+		var gb strings.Builder
+		gb.WriteString(tabBar + "\n\n")
+		gb.WriteString(styleGroupHeader.Render("Group: "+row.group) + "\n")
+		gb.WriteString(fmt.Sprintf("Databases: %d (%d running)\n\n", row.count, row.runningCount))
+		for _, e := range m.groupEntries(row.group) {
+			badge := styleBadgeStop.Render("○ stopped")
+			if e.running {
+				badge = styleBadgeRun.Render("● running")
+			}
+			gb.WriteString(fmt.Sprintf("  %s  %s  (%s:%d)\n", badge, e.db.Name, e.db.Provider, e.db.Port))
+		}
+		gb.WriteString("\n" + styleMutedText.Render("Enter/Space: expand/collapse  •  s: start/stop all in group"))
+		return paneStyle.Width(width).Height(height).Render(gb.String())
 	}
 
 	sel := m.selected()
@@ -377,7 +391,19 @@ func (m dashboardModel) renderTablesTab() string {
 		if m.erdLayout != nil && m.erdLayout.canvas != nil {
 			w := max(24, m.tableOverviewVP.Width)
 			h := max(4, m.tableOverviewVP.Height)
-			b.WriteString(m.erdLayout.canvas.renderWindow(m.erdXOffset, m.erdYOffset, w, h))
+			selTbl := ""
+			if m.tableCursor >= 0 && m.tableCursor < len(m.detailTables) {
+				selTbl = m.detailTables[m.tableCursor]
+			}
+			fkLine := formatTableRelationsSummary(selTbl, m.tableSchema, w)
+			canvasH := h
+			if fkLine != "" && h > 5 {
+				canvasH = h - 1
+			}
+			b.WriteString(m.erdLayout.canvas.renderWindow(m.erdXOffset, m.erdYOffset, w, canvasH))
+			if fkLine != "" && h > 5 {
+				b.WriteString("\n" + fkLine)
+			}
 		}
 	} else {
 		status := fmt.Sprintf("%s  %s  •  Enter: inspect  •  Q: query  •  /: filter  •  v: view  •  f: fields", viewBadge, fieldsBadge)
@@ -394,14 +420,17 @@ func (m dashboardModel) renderTablesTab() string {
 
 func (m dashboardModel) renderQueryTab() string {
 	var b strings.Builder
-	hint := "Press 'i' or Enter to type SQL"
+	hint := "Press 'i' or Enter to write SQL"
 	if m.queryResult != nil && m.queryResult.isSelect {
 		hint += "  •  e: export CSV/JSON  •  c: copy JSON"
+		if m.queryTotalW > max(24, m.queryVP.Width) {
+			hint += "  •  </>: h-scroll"
+		}
 	}
 	if m.queryInput.Focused() {
-		hint = "Enter: execute SQL  •  ↑/↓: history  •  Esc: blur"
+		hint = "Ctrl+R / F5: execute SQL  •  Enter: newline  •  Ctrl+P/N (or ↑/↓): history  •  Esc: blur"
 	}
-	b.WriteString("SQL> " + m.queryInput.View() + "\n")
+	b.WriteString(m.queryInput.View() + "\n")
 	b.WriteString(styleMutedText.Render(hint) + "\n\n")
 	if m.queryResult == nil && m.queryErr == nil {
 		b.WriteString(styleMutedText.Render("Results will appear here."))
@@ -461,7 +490,7 @@ func (m dashboardModel) footerHelpText() string {
 		}
 		return "  [Tables] ↑/↓: select  •  /: filter  •  Enter: inspect  •  Q: query  •  v: view  •  f: fields  •  ←/Esc: sidebar  •  ?: help  •  q: quit"
 	case 3:
-		return "  [Query] i/Enter: write SQL  •  e: export  •  c: copy JSON  •  ↑/↓: scroll  •  ←/Esc: sidebar  •  ?: help  •  q: quit"
+		return "  [Query] i/Enter: write SQL  •  Shift+←/→: h-scroll  •  e: export  •  c: copy JSON  •  ↑/↓: scroll  •  ?: help  •  q: quit"
 	default:
 		return "  ←/Esc: sidebar  •  1-4/Tab: tab  •  ?: help  •  q: quit"
 	}

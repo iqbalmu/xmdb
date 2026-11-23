@@ -516,6 +516,17 @@ func buildTableOverviewERDWithZoom(tables []string, graph *tableSchemaGraph, cur
 	rects := make(map[string]erdRect, len(cards))
 	var cursorRect erdRect
 
+	relatedTables := make(map[string]bool)
+	if focused && selectedName != "" && graph != nil {
+		for _, rel := range graph.relations {
+			if rel.fromTable == selectedName && rel.toTable != selectedName {
+				relatedTables[rel.toTable] = true
+			} else if rel.toTable == selectedName && rel.fromTable != selectedName {
+				relatedTables[rel.fromTable] = true
+			}
+		}
+	}
+
 	for i, cd := range cards {
 		r := i / colsPerRow
 		c := i % colsPerRow
@@ -531,6 +542,9 @@ func buildTableOverviewERDWithZoom(tables []string, graph *tableSchemaGraph, cur
 		if focused && cd.name == selectedName {
 			borderSt = erdStylePrimary
 			titleSt = erdStylePrimary
+		} else if focused && relatedTables[cd.name] {
+			borderSt = erdStyleHighlight
+			titleSt = erdStyleHighlight
 		}
 		if !effectiveShowFields {
 			bodySt = erdStyleMuted
@@ -665,6 +679,46 @@ func buildTableOverviewERDWithZoom(tables []string, graph *tableSchemaGraph, cur
 		rects:      rects,
 		cursorRect: cursorRect,
 	}
+}
+
+func erdHitTest(layout *erdLayoutResult, cx, cy int) string {
+	if layout == nil {
+		return ""
+	}
+	for name, r := range layout.rects {
+		if cx >= r.x && cx < r.x+r.w && cy >= r.y && cy < r.y+r.h {
+			return name
+		}
+	}
+	return ""
+}
+
+func formatTableRelationsSummary(tableName string, graph *tableSchemaGraph, maxWidth int) string {
+	if tableName == "" || graph == nil || len(graph.relations) == 0 {
+		return ""
+	}
+	var parts []string
+	seen := make(map[string]bool)
+	for _, rel := range graph.relations {
+		var label string
+		if rel.fromTable == tableName {
+			label = fmt.Sprintf("→ %s (%s→%s)", rel.toTable, rel.fromCol, rel.toCol)
+		} else if rel.toTable == tableName {
+			label = fmt.Sprintf("← %s (%s→%s)", rel.fromTable, rel.fromCol, rel.toCol)
+		}
+		if label != "" && !seen[label] {
+			seen[label] = true
+			parts = append(parts, label)
+		}
+	}
+	if len(parts) == 0 {
+		return styleMutedText.Render(fmt.Sprintf("FKs (%s): none", tableName))
+	}
+	line := fmt.Sprintf("FKs (%s): %s", tableName, strings.Join(parts, "  •  "))
+	if maxWidth > 0 && lipgloss.Width(line) > maxWidth {
+		line = ansi.Truncate(line, max(10, maxWidth-1), "…")
+	}
+	return lipgloss.NewStyle().Foreground(colorAccent).Render(line)
 }
 
 func formatTableOverviewDiagram(tables []string, graph *tableSchemaGraph, cursor int, focused bool, showFields bool, maxWidth int) (string, int) {

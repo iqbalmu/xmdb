@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/iqbalmu/xmdb/internal/state"
 	"github.com/iqbalmu/xmdb/pkg/utils"
 )
 
@@ -150,5 +151,74 @@ func TestExportModalAndQueryHistoryNavigation(t *testing.T) {
 	vis := m.visibleTables()
 	if len(vis) != 2 || vis[0] != "users" || vis[1] != "user_roles" {
 		t.Fatalf("visibleTables() = %v, want [users user_roles]", vis)
+	}
+
+	// Multi-line Enter inserts newline instead of executing
+	m.queryInput.SetValue("SELECT 1")
+	m.queryInput.CursorEnd()
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(dashboardModel)
+	if !strings.Contains(m.queryInput.Value(), "\n") {
+		t.Fatalf("expected Enter in multi-line editor to insert newline, got %q", m.queryInput.Value())
+	}
+
+	// Horizontal table scrolling
+	cols := []string{"id", "first_name", "last_name", "email_address"}
+	rows := [][]string{{"1", "Alice", "Smith", "alice@example.com"}}
+	out0, totalW := formatCompactTableWithOffset(cols, rows, 20, 0)
+	out1, totalW2 := formatCompactTableWithOffset(cols, rows, 20, 28)
+	if totalW <= 20 || totalW != totalW2 {
+		t.Fatalf("unexpected totalW=%d totalW2=%d", totalW, totalW2)
+	}
+	if out0 == out1 {
+		t.Fatalf("expected horizontal offset to change rendered table slice")
+	}
+	if !strings.Contains(out1, "email") {
+		t.Fatalf("expected scrolled slice to reveal later columns, got:\n%s", out1)
+	}
+
+	// ERD hit testing & FK summary
+	layout := &erdLayoutResult{
+		rects: map[string]erdRect{
+			"users": {x: 2, y: 2, w: 20, h: 6},
+		},
+	}
+	if hit := erdHitTest(layout, 5, 4); hit != "users" {
+		t.Fatalf("erdHitTest inside rect = %q, want users", hit)
+	}
+	if hit := erdHitTest(layout, 0, 0); hit != "" {
+		t.Fatalf("erdHitTest outside rect = %q, want empty", hit)
+	}
+
+	// Smart sidebar filter (multi-token + status + group/provider prefixes)
+	e1 := dbEntry{db: &state.Database{Name: "app_pg", Provider: "postgres", Group: "work", Port: 5432}, running: true}
+	e2 := dbEntry{db: &state.Database{Name: "app_my", Provider: "mysql", Group: "work", Port: 3306}, running: false}
+	if !matchesDBFilter(e1, "work postgres running") {
+		t.Fatalf("expected e1 to match 'work postgres running'")
+	}
+	if matchesDBFilter(e2, "work running") {
+		t.Fatalf("expected stopped e2 not to match 'work running'")
+	}
+	if !matchesDBFilter(e2, "g:work p:mysql stopped") {
+		t.Fatalf("expected e2 to match 'g:work p:mysql stopped'")
+	}
+
+	// Tab & Shift+Tab switching in right pane
+	m.focusPane = 1
+	m.activeTab = 0
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(dashboardModel)
+	if m.activeTab != 1 {
+		t.Fatalf("after Tab activeTab = %d, want 1", m.activeTab)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = next.(dashboardModel)
+	if m.activeTab != 0 {
+		t.Fatalf("after Shift+Tab activeTab = %d, want 0", m.activeTab)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = next.(dashboardModel)
+	if m.activeTab != 3 {
+		t.Fatalf("after Shift+Tab wrap activeTab = %d, want 3", m.activeTab)
 	}
 }

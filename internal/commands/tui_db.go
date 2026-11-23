@@ -207,8 +207,13 @@ func scanAllRows(rows *sql.Rows, maxRows int) ([]string, [][]string, error) {
 }
 
 func formatCompactTable(cols []string, rows [][]string, maxWidth int) string {
+	out, _ := formatCompactTableWithOffset(cols, rows, maxWidth, 0)
+	return out
+}
+
+func formatCompactTableWithOffset(cols []string, rows [][]string, maxWidth, xOffset int) (string, int) {
 	if len(cols) == 0 {
-		return styleMutedText.Render("(no columns)")
+		return styleMutedText.Render("(no columns)"), 0
 	}
 	widths := make([]int, len(cols))
 	for i, c := range cols {
@@ -249,32 +254,48 @@ func formatCompactTable(cols []string, rows [][]string, maxWidth int) string {
 			}
 			parts[i] = val
 		}
-		line := strings.Join(parts, " │ ")
-		if maxWidth > 0 && lipgloss.Width(line) > maxWidth {
-			line = ansi.Truncate(line, maxWidth-1, "…")
-		}
-		return line
+		return strings.Join(parts, " │ ")
 	}
 
+	sliceLine := func(line string) string {
+		if maxWidth <= 0 {
+			return line
+		}
+		total := lipgloss.Width(line)
+		if xOffset <= 0 && total <= maxWidth {
+			return line
+		}
+		start := max(0, xOffset)
+		if start >= total {
+			return ""
+		}
+		end := start + maxWidth
+		sliced := ansi.Cut(line, start, end)
+		if end < total && maxWidth > 1 {
+			sliced = ansi.Cut(line, start, end-1) + "…"
+		}
+		return sliced
+	}
+
+	headerLine := renderRow(cols)
+	totalWidth := lipgloss.Width(headerLine)
+
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorPrimary).Render(renderRow(cols)) + "\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorPrimary).Render(sliceLine(headerLine)) + "\n")
 
 	sepParts := make([]string, len(cols))
 	for i, w := range widths {
 		sepParts[i] = strings.Repeat("─", w)
 	}
 	sep := strings.Join(sepParts, "─┼─")
-	if maxWidth > 0 && lipgloss.Width(sep) > maxWidth {
-		sep = ansi.Truncate(sep, maxWidth, "")
-	}
-	b.WriteString(styleMutedText.Render(sep) + "\n")
+	b.WriteString(styleMutedText.Render(sliceLine(sep)) + "\n")
 
 	if len(rows) == 0 {
 		b.WriteString(styleMutedText.Render("(0 rows)") + "\n")
-		return b.String()
+		return b.String(), totalWidth
 	}
 	for _, r := range rows {
-		b.WriteString(renderRow(r) + "\n")
+		b.WriteString(sliceLine(renderRow(r)) + "\n")
 	}
-	return b.String()
+	return b.String(), totalWidth
 }

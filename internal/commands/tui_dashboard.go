@@ -9,6 +9,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -131,19 +132,27 @@ type dashboardModel struct {
 	tableShowFields  bool
 	tableFiltering   bool
 	tableFilterInput textinput.Model
-	erdXOffset       int
-	erdYOffset       int
-	erdZoom          int // 0=50% (out), 1=100% (normal), 2=150% (in)
-	erdLayout        *erdLayoutResult
+	erdXOffset        int
+	erdYOffset        int
+	erdZoom           int // 0=50% (out), 1=100% (normal), 2=150% (in)
+	erdLayout         *erdLayoutResult
+	erdDragging       bool
+	erdDragLastX      int
+	erdDragLastY      int
+	erdDragMoved      bool
+	lastERDClickTable string
+	lastERDClickAt    time.Time
 
 	// Query tab
-	queryInput   textinput.Model
+	queryInput   textarea.Model
 	queryVP      viewport.Model
 	queryResult  *sqlQueryResult
 	queryErr     error
 	queryHistory []string
 	queryHistIdx int
 	queryDraft   string
+	queryXOffset int
+	queryTotalW  int
 
 	// Filter
 	filtering   bool
@@ -168,7 +177,7 @@ type dashboardModel struct {
 
 func newDashboardModel() dashboardModel {
 	fi := textinput.New()
-	fi.Placeholder = "filter by name, provider, or group..."
+	fi.Placeholder = "filter: name, group, postgres, running..."
 	fi.CharLimit = 64
 	fi.Width = 28
 
@@ -177,10 +186,13 @@ func newDashboardModel() dashboardModel {
 	lsi.CharLimit = 64
 	lsi.Width = 28
 
-	qi := textinput.New()
+	qi := textarea.New()
 	qi.Placeholder = "SELECT * FROM users LIMIT 10;"
-	qi.CharLimit = 512
-	qi.Width = 48
+	qi.CharLimit = 4096
+	qi.ShowLineNumbers = false
+	qi.Prompt = "SQL> "
+	qi.SetWidth(48)
+	qi.SetHeight(4)
 
 	tfi := textinput.New()
 	tfi.Placeholder = "filter tables..."
@@ -238,6 +250,59 @@ func (m *dashboardModel) setToast(msg string, isErr bool) tea.Cmd {
 	})
 }
 
+func matchesDBFilter(e dbEntry, query string) bool {
+	tokens := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	if len(tokens) == 0 {
+		return true
+	}
+	name := strings.ToLower(e.db.Name)
+	group := strings.ToLower(groupLabel(e.db.Group))
+	provider := strings.ToLower(e.db.Provider)
+	port := fmt.Sprintf("%d", e.db.Port)
+	status := "stopped"
+	if e.running {
+		status = "running"
+	}
+
+	for _, tok := range tokens {
+		switch {
+		case tok == "running" || tok == "up" || tok == "status:running" || tok == "status:up":
+			if !e.running {
+				return false
+			}
+		case tok == "stopped" || tok == "down" || tok == "status:stopped" || tok == "status:down":
+			if e.running {
+				return false
+			}
+		case strings.HasPrefix(tok, "g:"):
+			if !strings.Contains(group, strings.TrimPrefix(tok, "g:")) {
+				return false
+			}
+		case strings.HasPrefix(tok, "group:"):
+			if !strings.Contains(group, strings.TrimPrefix(tok, "group:")) {
+				return false
+			}
+		case strings.HasPrefix(tok, "p:"):
+			if !strings.Contains(provider, strings.TrimPrefix(tok, "p:")) {
+				return false
+			}
+		case strings.HasPrefix(tok, "provider:"):
+			if !strings.Contains(provider, strings.TrimPrefix(tok, "provider:")) {
+				return false
+			}
+		default:
+			if !strings.Contains(name, tok) &&
+				!strings.Contains(group, tok) &&
+				!strings.Contains(provider, tok) &&
+				!strings.Contains(port, tok) &&
+				!strings.Contains(status, tok) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (m *dashboardModel) applyFilter() {
 	// Remember the current selection so the cursor follows the same row
 	// across filter changes and periodic reloads.
@@ -250,15 +315,13 @@ func (m *dashboardModel) applyFilter() {
 		}
 	}
 
-	q := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+	q := strings.TrimSpace(m.filterInput.Value())
 	if q == "" {
 		m.filtered = m.entries
 	} else {
 		var out []dbEntry
 		for _, e := range m.entries {
-			if strings.Contains(strings.ToLower(e.db.Name), q) ||
-				strings.Contains(strings.ToLower(groupLabel(e.db.Group)), q) ||
-				strings.Contains(strings.ToLower(e.db.Provider), q) {
+			if matchesDBFilter(e, q) {
 				out = append(out, e)
 			}
 		}
@@ -395,9 +458,9 @@ func (m *dashboardModel) syncViewportSizes() {
 	m.tableOverviewVP.Height = max(4, innerH-2)
 	m.tableDetailVP.Width = innerW
 	m.tableDetailVP.Height = max(4, innerH-2)
-	m.queryInput.Width = max(20, innerW-6)
+	m.queryInput.SetWidth(max(20, innerW-2))
 	m.queryVP.Width = innerW
-	m.queryVP.Height = max(4, innerH-5)
+	m.queryVP.Height = max(4, innerH-8)
 }
 
 func (m *dashboardModel) refreshLogsViewport() {
@@ -536,6 +599,8 @@ func (m *dashboardModel) resetRightSubstate() {
 	m.queryErr = nil
 	m.queryHistIdx = -1
 	m.queryDraft = ""
+	m.queryXOffset = 0
+	m.queryTotalW = 0
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -615,6 +680,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sel := m.selected(); sel != nil && sel.db.Name == msg.dbName {
 			m.queryErr = msg.err
 			m.queryResult = msg.result
+			m.queryXOffset = 0
 			m.renderQueryResultToVP()
 		}
 		return m, nil
@@ -732,11 +798,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Right-pane Query input focused
 		if m.focusPane == 1 && m.activeTab == 3 && m.queryInput.Focused() {
-			switch msg.String() {
-			case "esc":
-				m.queryInput.Blur()
-				return m, nil
-			case "up":
+			prevHistory := func() {
 				if len(m.queryHistory) > 0 {
 					if m.queryHistIdx == -1 {
 						m.queryDraft = m.queryInput.Value()
@@ -747,8 +809,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.queryInput.SetValue(m.queryHistory[m.queryHistIdx])
 					m.queryInput.CursorEnd()
 				}
-				return m, nil
-			case "down":
+			}
+			nextHistory := func() {
 				if m.queryHistIdx != -1 {
 					if m.queryHistIdx < len(m.queryHistory)-1 {
 						m.queryHistIdx++
@@ -759,8 +821,29 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.queryInput.CursorEnd()
 				}
+			}
+
+			switch msg.String() {
+			case "esc":
+				m.queryInput.Blur()
 				return m, nil
-			case "enter":
+			case "ctrl+p", "alt+up":
+				prevHistory()
+				return m, nil
+			case "ctrl+n", "alt+down":
+				nextHistory()
+				return m, nil
+			case "up":
+				if m.queryInput.Line() == 0 && (m.queryInput.LineCount() <= 1 || m.queryHistIdx != -1) {
+					prevHistory()
+					return m, nil
+				}
+			case "down":
+				if m.queryInput.Line() == m.queryInput.LineCount()-1 && m.queryHistIdx != -1 {
+					nextHistory()
+					return m, nil
+				}
+			case "ctrl+r", "f5", "alt+enter":
 				sel := m.selected()
 				q := strings.TrimSpace(m.queryInput.Value())
 				if sel == nil || !sel.running {
@@ -817,7 +900,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, loadDetailCmd(m.selected(), m.activeTab)
 		}
 
-	case "[":
+	case "shift+tab", "[":
 		if m.focusPane == 1 {
 			m.activeTab = (m.activeTab + tabCount - 1) % tabCount
 			return m, loadDetailCmd(m.selected(), m.activeTab)
@@ -913,15 +996,27 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown", "ctrl+d":
 		return m.scrollRight(8)
 
-	case "shift+left":
-		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram {
+	case "shift+left", "<":
+		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram && msg.String() == "shift+left" {
 			m.panERD(-8, 0)
 			return m, nil
 		}
+		if m.focusPane == 1 && m.activeTab == 3 && m.queryResult != nil && m.queryResult.isSelect {
+			m.queryXOffset = max(0, m.queryXOffset-8)
+			m.renderQueryResultToVP()
+			return m, nil
+		}
 
-	case "shift+right":
-		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram {
+	case "shift+right", ">":
+		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram && msg.String() == "shift+right" {
 			m.panERD(8, 0)
+			return m, nil
+		}
+		if m.focusPane == 1 && m.activeTab == 3 && m.queryResult != nil && m.queryResult.isSelect {
+			w := max(24, m.queryVP.Width)
+			maxX := max(0, m.queryTotalW-w)
+			m.queryXOffset = min(maxX, m.queryXOffset+8)
+			m.renderQueryResultToVP()
 			return m, nil
 		}
 
@@ -961,6 +1056,11 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.erdXOffset = 0
 			m.erdYOffset = 0
 			m.renderTableOverviewToVP()
+			return m, nil
+		}
+		if m.focusPane == 1 && m.activeTab == 3 && m.queryResult != nil && m.queryResult.isSelect {
+			m.queryXOffset = 0
+			m.renderQueryResultToVP()
 			return m, nil
 		}
 
@@ -1255,11 +1355,67 @@ func (m dashboardModel) scrollRight(delta int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m dashboardModel) erdCanvasOrigin() (int, int) {
+	stacked, leftW, leftH, _, _ := m.layoutDimensions()
+	originX := leftW + 4
+	originY := 5
+	if stacked {
+		originX = 2
+		originY = leftH + 6
+	}
+	return originX, originY
+}
+
 func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal != modalNone {
 		return m, nil
 	}
 	stacked, leftW, leftH, _, _ := m.layoutDimensions()
+
+	if m.erdDragging {
+		if msg.Action == tea.MouseActionMotion {
+			dx := m.erdDragLastX - msg.X
+			dy := m.erdDragLastY - msg.Y
+			if dx != 0 || dy != 0 {
+				m.erdDragMoved = true
+				m.panERD(dx, dy)
+				m.erdDragLastX = msg.X
+				m.erdDragLastY = msg.Y
+			}
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionRelease {
+			wasMoved := m.erdDragMoved
+			m.erdDragging = false
+			m.erdDragMoved = false
+			if !wasMoved && m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram {
+				originX, originY := m.erdCanvasOrigin()
+				cx := msg.X - originX + m.erdXOffset
+				cy := msg.Y - originY + m.erdYOffset
+				if hit := erdHitTest(m.erdLayout, cx, cy); hit != "" {
+					for i, t := range m.detailTables {
+						if t == hit {
+							m.tableCursor = i
+							break
+						}
+					}
+					if m.lastERDClickTable == hit && time.Since(m.lastERDClickAt) < 450*time.Millisecond {
+						m.lastERDClickTable = ""
+						sel := m.selected()
+						if sel != nil && sel.running {
+							m.selectedTable = hit
+							m.busy = fmt.Sprintf("Inspecting '%s'...", hit)
+							return m, tea.Batch(m.spinner.Tick, loadTableDetailCmd(sel.db, hit))
+						}
+					}
+					m.lastERDClickTable = hit
+					m.lastERDClickAt = time.Now()
+					m.renderTableOverviewToVP()
+				}
+			}
+			return m, nil
+		}
+	}
 
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
@@ -1272,6 +1428,10 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram {
+			m.panERD(0, -3)
+			return m, nil
+		}
 		return m.scrollRight(-3)
 
 	case tea.MouseButtonWheelDown:
@@ -1282,6 +1442,10 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.resetRightSubstate()
 				return m, loadDetailCmd(m.selected(), m.activeTab)
 			}
+			return m, nil
+		}
+		if m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram {
+			m.panERD(0, 3)
 			return m, nil
 		}
 		return m.scrollRight(3)
@@ -1329,6 +1493,16 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					m.activeTab = tabIdx
 					return m, loadDetailCmd(m.selected(), m.activeTab)
 				}
+			}
+			return m, nil
+		}
+		if m.activeTab == 2 && m.selectedTable == "" && m.tableViewDiagram {
+			_, originY := m.erdCanvasOrigin()
+			if msg.Y >= originY {
+				m.erdDragging = true
+				m.erdDragLastX = msg.X
+				m.erdDragLastY = msg.Y
+				m.erdDragMoved = false
 			}
 		}
 	}
