@@ -27,10 +27,14 @@ func (d *Database) GetUsername() string {
 	if d.User != "" {
 		return d.User
 	}
-	if d.Provider == "postgres" {
+	switch d.Provider {
+	case "postgres":
 		return "postgres"
+	case "redis", "valkey":
+		return "default"
+	default:
+		return "root"
 	}
-	return "root"
 }
 
 func (d *Database) GetPassword() string {

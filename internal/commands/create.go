@@ -16,6 +16,8 @@ import (
 var (
 	createProvider    string
 	createVersion     string
+	createPreset      string
+	createImage       string
 	createPort        int
 	createGroup       string
 	createInteractive bool
@@ -35,8 +37,10 @@ var createCmd = &cobra.Command{
 }
 
 func init() {
-	createCmd.Flags().StringVarP(&createProvider, "provider", "p", "", "Database provider (mysql, postgres)")
+	createCmd.Flags().StringVarP(&createProvider, "provider", "p", "", "Database provider (postgres, mysql, mariadb, redis, valkey, mongodb)")
 	createCmd.Flags().StringVarP(&createVersion, "version", "v", "", "Database version")
+	createCmd.Flags().StringVar(&createPreset, "preset", "", "Provider preset (postgres: pgvector, postgis, timescaledb)")
+	createCmd.Flags().StringVar(&createImage, "image", "", "Custom Docker image override (e.g. pgvector/pgvector:pg16)")
 	createCmd.Flags().IntVar(&createPort, "port", 0, "Host port")
 	createCmd.Flags().StringVarP(&createGroup, "group", "g", "", "Group the database belongs to (empty = global)")
 	createCmd.Flags().BoolVarP(&createInteractive, "interactive", "i", false, "Interactive mode")
@@ -77,25 +81,28 @@ func runCreate(args []string) (bool, error) {
 		if provider == "" {
 			return true, fmt.Errorf("--provider is required")
 		}
+		prov, err := providers.For(provider)
+		if err != nil {
+			return true, err
+		}
+		provider = prov.Name()
 
 		rootPassword, err = utils.GeneratePassword(utils.DefaultPasswordLength)
 		if err != nil {
 			return true, fmt.Errorf("generating password: %w", err)
 		}
 
-		userPassword, err = utils.GeneratePassword(utils.DefaultPasswordLength)
-		if err != nil {
-			return true, fmt.Errorf("generating password: %w", err)
+		if prov.Kind() == providers.EngineSQL {
+			userPassword, err = utils.GeneratePassword(utils.DefaultPasswordLength)
+			if err != nil {
+				return true, fmt.Errorf("generating password: %w", err)
+			}
+			username = defaultUsername
+			createUser = true
 		}
 
-		username = defaultUsername
-		createUser = true
-
 		if version == "" {
-			version = providers.DefaultMySQLVersion
-			if provider == utils.ProviderPostgres {
-				version = providers.DefaultPostgresVersion
-			}
+			version = prov.GetDefaultVersion()
 		}
 	}
 
@@ -103,6 +110,8 @@ func runCreate(args []string) (bool, error) {
 		Name:         dbName,
 		Provider:     provider,
 		Version:      version,
+		Preset:       strings.TrimSpace(createPreset),
+		CustomImage:  strings.TrimSpace(createImage),
 		Port:         port,
 		Group:        strings.TrimSpace(createGroup),
 		RootPassword: rootPassword,
@@ -130,17 +139,19 @@ func runCreate(args []string) (bool, error) {
 
 	fmt.Println("Connection Information:")
 	color.Cyan("  Provider: %s", dbState.Provider)
-	color.Cyan("  Port: %d", dbState.Port)
-	color.Cyan("  Database: %s", dbState.DatabaseName)
-
-	if opts.CreateUser && opts.Username != "" {
-		color.Cyan("  User: %s", opts.Username)
-		color.Cyan("  Password: %s", opts.UserPassword)
-		fmt.Println()
-
-		color.White("Connection String:")
-		fmt.Printf("  %s\n", prov.GetConnectionString(dbConfig))
+	if dbState.Preset != "" {
+		color.Cyan("  Preset:   %s", dbState.Preset)
 	}
+	color.Cyan("  Port:     %d", dbState.Port)
+	if prov.Kind() != providers.EngineKV {
+		color.Cyan("  Database: %s", dbState.DatabaseName)
+	}
+	color.Cyan("  User:     %s", dbState.GetUsername())
+	color.Cyan("  Password: %s", dbState.GetPassword())
+	fmt.Println()
+
+	color.White("Connection String:")
+	fmt.Printf("  %s\n", prov.GetConnectionString(dbConfig))
 
 	fmt.Println()
 	return true, nil
@@ -170,7 +181,7 @@ func promptCreate(
 	createUser *bool,
 	username, userPassword, seedPath *string,
 ) bool {
-	n, p, v, pt, grp, rp, cu, u, up, sp, ok := tui.RunCreateTUI(stateMgr)
+	n, p, pr, v, pt, grp, rp, cu, u, up, sp, ok := tui.RunCreateTUI(stateMgr)
 	if !ok {
 		return false
 	}
@@ -179,6 +190,9 @@ func promptCreate(
 		*provider = createProvider
 	} else {
 		*provider = p
+	}
+	if createPreset == "" {
+		createPreset = pr
 	}
 	if createVersion != "" {
 		*version = createVersion

@@ -128,7 +128,11 @@ func (m *Manifest) Validate() error {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("database key cannot be empty")
 		}
-		if _, err := providers.For(spec.Provider); err != nil {
+		prov, err := providers.For(spec.Provider)
+		if err != nil {
+			return fmt.Errorf("database '%s': %w", key, err)
+		}
+		if err := providers.ValidatePreset(prov.Name(), spec.Preset); err != nil {
 			return fmt.Errorf("database '%s': %w", key, err)
 		}
 		if spec.Port < 0 || spec.Port > 65535 {

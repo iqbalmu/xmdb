@@ -32,21 +32,32 @@ func runList() {
 	titleColor := color.New(color.FgCyan, color.Bold)
 	titleColor.Println("\nSupported Database Providers:")
 
-	data := [][]any{
-		{"mysql", providers.DefaultMySQLVersion, providers.DefaultMySQLPort, strings.Join(providers.KnownVersions("mysql"), ", ")},
-		{"postgres", providers.DefaultPostgresVersion, providers.DefaultPostgresPort, strings.Join(providers.KnownVersions("postgres"), ", ")},
+	var data [][]any
+	for _, p := range providers.AllProviders() {
+		presets := strings.Join(providers.KnownPresets(p.Name()), ", ")
+		if presets == "" {
+			presets = "-"
+		}
+		data = append(data, []any{
+			p.Name(),
+			string(p.Kind()),
+			p.GetDefaultVersion(),
+			p.GetDefaultPort(),
+			strings.Join(providers.KnownVersions(p.Name()), ", "),
+			presets,
+		})
 	}
 
 	fmt.Println()
 
 	table := tablewriter.NewTable(os.Stdout)
-	table.Header("Provider", "Default Version", "Default Port", "Known Versions")
+	table.Header("Provider", "Kind", "Default Version", "Default Port", "Known Versions", "Presets")
 	table.Bulk(data)
 	table.Render()
 
 	fmt.Println()
-
-	fmt.Println("Usage: xmdb create <name> --provider <provider>")
-	fmt.Println("Example: xmdb create mydb --provider mysql")
+	fmt.Println("Usage:   xmdb create <name> --provider <provider> [--preset <preset>] [--image <image>]")
+	fmt.Println("Example: xmdb create vectordb --provider postgres --preset pgvector")
+	fmt.Println("Example: xmdb create cache --provider redis")
 	fmt.Println()
 }

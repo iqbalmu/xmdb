@@ -405,6 +405,7 @@ func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			opts := service.CreateOptions{
 				Name:         cm.dbName,
 				Provider:     cm.provider,
+				Preset:       cm.preset,
 				Version:      cm.version,
 				Port:         cm.port,
 				Group:        cm.group,

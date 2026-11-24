@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-11-24
+
+### Added
+- **Multi-Model Database Providers**: added full support for **MariaDB** (`mariadb`), **Redis** (`redis`), **Valkey** (`valkey`), and **MongoDB** (`mongodb`) alongside PostgreSQL and MySQL — including native protocol readiness probes, interactive shells (`mariadb`, `redis-cli`, `valkey-cli`, `mongosh`), backups/restores, online logical snapshots, and live/snapshot clones.
+- **PostgreSQL Extension Presets & Custom Image Override**: `--preset pgvector|postgis|timescaledb` (and `preset:` in `xmdb.yaml` + TUI create wizard) with automatic `CREATE EXTENSION IF NOT EXISTS ...` on init and reset, plus `--image` override for any custom compatible Docker image.
+- **Adaptive TUI Dashboard**:
+  - Redis & Valkey display `[3] Keys` (SCAN list with type & TTL + value preview) and `[4] Console` (inline RESP command runner).
+  - MongoDB displays `[3] Collections` (collection counts + JSON document preview) and `[4] Query` (inline `mongosh --eval` runner).
+  - MariaDB shares full relational ERD, table inspection, and SQL query support.
+
 ## [1.6.0] - 2026-11-24
 
 ### Added

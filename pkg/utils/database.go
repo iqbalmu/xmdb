@@ -8,6 +8,10 @@ import (
 const (
 	ProviderMySQL    = "mysql"
 	ProviderPostgres = "postgres"
+	ProviderMariaDB  = "mariadb"
+	ProviderRedis    = "redis"
+	ProviderValkey   = "valkey"
+	ProviderMongoDB  = "mongodb"
 
 	DefaultPasswordLength = 16
 )

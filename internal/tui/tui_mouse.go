@@ -57,7 +57,7 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 						if sel != nil && sel.running {
 							m.selectedTable = hit
 							m.busy = fmt.Sprintf("Inspecting '%s'...", hit)
-							return m, tea.Batch(m.spinner.Tick, loadTableDetailCmd(sel.db, hit))
+							return m, tea.Batch(m.spinner.Tick, loadTableDetailCmd(m.runtimeMode, sel.db, hit))
 						}
 					}
 					m.lastERDClickTable = hit

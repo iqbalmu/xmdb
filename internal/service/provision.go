@@ -59,6 +59,9 @@ func ProvisionDatabase(ctx context.Context, runtimeMode string, stateMgr *state.
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := providers.ValidatePreset(prov.Name(), opts.Preset); err != nil {
+		return nil, nil, err
+	}
 
 	port := opts.Port
 	if port == 0 {
@@ -139,20 +142,32 @@ func ProvisionDatabase(ctx context.Context, runtimeMode string, stateMgr *state.
 		return nil, nil, err
 	}
 
-	if opts.CreateUser && opts.Username != "" {
-		if sqlProv, ok := providers.AsSQL(prov); ok {
-			report(fmt.Sprintf("Creating user '%s'...", opts.Username))
+	if sqlProv, ok := providers.AsSQL(prov); ok {
+		needUser := opts.CreateUser && opts.Username != ""
+		postInitProv, hasPostInit := prov.(providers.PostInitProvider)
+		needPostInit := hasPostInit && strings.TrimSpace(opts.Preset) != ""
 
+		if needUser || needPostInit {
 			db, err := sqlProv.Connect(adminConfig)
 			if err != nil {
 				CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
 				return nil, nil, fmt.Errorf("connecting to database: %w", err)
 			}
-
-			if err := sqlProv.CreateUser(ctx, db, opts.Username, opts.UserPassword, opts.Name); err != nil {
-				db.Close()
-				CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
-				return nil, nil, fmt.Errorf("creating user: %w", err)
+			if needUser {
+				report(fmt.Sprintf("Creating user '%s'...", opts.Username))
+				if err := sqlProv.CreateUser(ctx, db, opts.Username, opts.UserPassword, opts.Name); err != nil {
+					db.Close()
+					CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
+					return nil, nil, fmt.Errorf("creating user: %w", err)
+				}
+			}
+			if needPostInit {
+				report(fmt.Sprintf("Enabling preset '%s' extension...", opts.Preset))
+				if err := postInitProv.PostInit(ctx, db, opts.Preset); err != nil {
+					db.Close()
+					CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
+					return nil, nil, fmt.Errorf("enabling preset '%s': %w", opts.Preset, err)
+				}
 			}
 			db.Close()
 		}

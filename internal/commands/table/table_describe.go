@@ -9,7 +9,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -60,7 +59,7 @@ func runDescribe(dbName, tableName string) error {
 	ctx := context.Background()
 
 	var rows *sql.Rows
-	if dbState.Provider == utils.ProviderMySQL {
+	if providers.IsMySQLFamily(dbState.Provider) {
 		rows, err = db.QueryContext(ctx, fmt.Sprintf("DESCRIBE %s", providers.QuoteIdentMySQL(tableName)))
 	} else {
 		schema, tbl := providers.SplitTablePG(tableName)
@@ -82,7 +81,7 @@ func runDescribe(dbName, tableName string) error {
 	var data [][]any
 	table := tablewriter.NewTable(os.Stdout)
 
-	if dbState.Provider == utils.ProviderMySQL {
+	if providers.IsMySQLFamily(dbState.Provider) {
 		table.Header([]string{"Field", "Type", "Null", "Key", "Default", "Extra"})
 
 		for rows.Next() {

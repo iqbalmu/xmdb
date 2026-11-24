@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
@@ -43,12 +44,14 @@ type msgDatabasesLoaded struct {
 }
 
 type msgDetailLoaded struct {
-	name        string
-	tab         int
-	logs        string
-	tables      []string
-	tableSchema *tableSchemaGraph
-	err         error
+	name           string
+	tab            int
+	logs           string
+	tables         []string
+	tableSchema    *tableSchemaGraph
+	kvKeys         []providers.KVKeyInfo
+	docCollections []docCollectionInfo
+	err            error
 }
 
 type msgTableDetailLoaded struct {
@@ -130,9 +133,11 @@ type dashboardModel struct {
 	logMatchLines   []int
 	logMatchCurrent int
 
-	// Tables tab
+	// Tables / Keys / Collections tab
 	detailTables      []string
 	tableSchema       *tableSchemaGraph
+	kvKeys            []providers.KVKeyInfo
+	docCollections    []docCollectionInfo
 	tableCursor       int
 	selectedTable     string
 	tableDetail       *tableDetail
@@ -373,10 +378,38 @@ func (m dashboardModel) visibleTables() []string {
 	return out
 }
 
+func (m dashboardModel) selectedEngineKind() providers.EngineKind {
+	sel := m.selected()
+	if sel == nil {
+		return providers.EngineSQL
+	}
+	prov, err := providers.For(sel.db.Provider)
+	if err != nil {
+		return providers.EngineSQL
+	}
+	return prov.Kind()
+}
+
+func (m *dashboardModel) syncQueryPrompt() {
+	switch m.selectedEngineKind() {
+	case providers.EngineKV:
+		m.queryInput.Prompt = "KV> "
+		m.queryInput.Placeholder = "GET mykey  |  KEYS *  |  INFO server"
+	case providers.EngineDocument:
+		m.queryInput.Prompt = "MONGO> "
+		m.queryInput.Placeholder = "db.users.find().limit(10).toArray()"
+	default:
+		m.queryInput.Prompt = "SQL> "
+		m.queryInput.Placeholder = "SELECT * FROM users LIMIT 10;"
+	}
+}
+
 func (m *dashboardModel) resetRightSubstate() {
 	m.selectedTable = ""
 	m.tableDetail = nil
 	m.tableSchema = nil
+	m.kvKeys = nil
+	m.docCollections = nil
 	m.tableCursor = 0
 	m.tableFiltering = false
 	m.tableFilterInput.Blur()
@@ -391,6 +424,7 @@ func (m *dashboardModel) resetRightSubstate() {
 	m.queryDraft = ""
 	m.queryXOffset = 0
 	m.queryTotalW = 0
+	m.syncQueryPrompt()
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -434,6 +468,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dockerErr = msg.dockerErr
 		m.entries = msg.entries
 		m.applyFilter()
+		m.syncQueryPrompt()
 		return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 
 	case msgDetailLoaded:
@@ -441,6 +476,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailLogs = msg.logs
 			m.detailTables = msg.tables
 			m.tableSchema = msg.tableSchema
+			m.kvKeys = msg.kvKeys
+			m.docCollections = msg.docCollections
 			m.detailErr = msg.err
 			if msg.tab == 1 {
 				m.refreshLogsViewport()

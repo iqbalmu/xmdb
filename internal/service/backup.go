@@ -29,10 +29,6 @@ func BackupDatabase(ctx context.Context, runtimeMode, name, outputPath string) (
 	if err != nil {
 		return "", 0, "", err
 	}
-	snapProv, ok := providers.AsSnapshot(prov)
-	if !ok {
-		return "", 0, "", fmt.Errorf("provider '%s' does not support backup", db.Provider)
-	}
 
 	dockerMgr, err := container.NewDockerManager(runtimeMode)
 	if err != nil {
@@ -46,7 +42,14 @@ func BackupDatabase(ctx context.Context, runtimeMode, name, outputPath string) (
 
 	if outputPath == "" {
 		timestamp := time.Now().Format("20060102_150405")
-		outputPath = fmt.Sprintf("backup_%s_%s.sql", name, timestamp)
+		ext := ".sql"
+		switch prov.Kind() {
+		case providers.EngineKV:
+			ext = ".kv.json.gz"
+		case providers.EngineDocument:
+			ext = ".archive.gz"
+		}
+		outputPath = fmt.Sprintf("backup_%s_%s%s", name, timestamp, ext)
 	}
 
 	absPath, err := filepath.Abs(outputPath)
@@ -54,22 +57,36 @@ func BackupDatabase(ctx context.Context, runtimeMode, name, outputPath string) (
 		return "", 0, "", fmt.Errorf("invalid output path: %w", err)
 	}
 
-	cmd := snapProv.BackupCommand(adminDBConfig(db))
-
 	dumpFile, err := os.OpenFile(absPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("creating backup file: %w", err)
 	}
 
-	res, err := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, nil, dumpFile)
-	dumpFile.Close()
-	if err != nil {
+	var stderr string
+	if kvProv, ok := providers.AsKV(prov); ok {
+		err = kvProv.DumpKV(ctx, adminDBConfig(db), dumpFile)
+		dumpFile.Close()
+		if err != nil {
+			os.Remove(absPath)
+			return "", 0, "", fmt.Errorf("creating KV backup: %w", err)
+		}
+	} else if snapProv, ok := providers.AsSnapshot(prov); ok {
+		cmd := snapProv.BackupCommand(adminDBConfig(db))
+		res, execErr := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, nil, dumpFile)
+		dumpFile.Close()
+		if execErr != nil {
+			os.Remove(absPath)
+			return "", 0, "", fmt.Errorf("creating backup: %w", execErr)
+		}
+		if res.ExitCode != 0 {
+			os.Remove(absPath)
+			return "", 0, "", fmt.Errorf("creating backup (exit %d):\n%s", res.ExitCode, res.Stderr)
+		}
+		stderr = res.Stderr
+	} else {
+		dumpFile.Close()
 		os.Remove(absPath)
-		return "", 0, "", fmt.Errorf("creating backup: %w", err)
-	}
-	if res.ExitCode != 0 {
-		os.Remove(absPath)
-		return "", 0, "", fmt.Errorf("creating backup (exit %d):\n%s", res.ExitCode, res.Stderr)
+		return "", 0, "", fmt.Errorf("provider '%s' does not support backup", db.Provider)
 	}
 
 	fileInfo, _ := os.Stat(absPath)
@@ -77,5 +94,5 @@ func BackupDatabase(ctx context.Context, runtimeMode, name, outputPath string) (
 	if fileInfo != nil {
 		sizeBytes = fileInfo.Size()
 	}
-	return absPath, sizeBytes, res.Stderr, nil
+	return absPath, sizeBytes, stderr, nil
 }

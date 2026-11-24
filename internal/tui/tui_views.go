@@ -8,18 +8,85 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/service"
 )
 
 func (m *dashboardModel) renderTableOverviewToVP() {
+	kind := m.selectedEngineKind()
 	if len(m.detailTables) == 0 {
 		m.erdLayout = nil
-		m.tableOverviewVP.SetContent(styleMutedText.Render("(no tables found)"))
+		switch kind {
+		case providers.EngineKV:
+			m.tableOverviewVP.SetContent(styleMutedText.Render("(no keys found)"))
+		case providers.EngineDocument:
+			m.tableOverviewVP.SetContent(styleMutedText.Render("(no collections found)"))
+		default:
+			m.tableOverviewVP.SetContent(styleMutedText.Render("(no tables found)"))
+		}
 		return
 	}
 	w := max(24, m.tableOverviewVP.Width)
 	h := max(4, m.tableOverviewVP.Height)
 	focused := m.focusPane == 1
+
+	if kind == providers.EngineKV {
+		m.erdLayout = nil
+		vis := m.visibleTables()
+		if len(vis) == 0 {
+			m.tableOverviewVP.SetContent(styleMutedText.Render("(no matching keys)"))
+			return
+		}
+		infoByKey := make(map[string]providers.KVKeyInfo, len(m.kvKeys))
+		for _, k := range m.kvKeys {
+			infoByKey[k.Key] = k
+		}
+		var lines []string
+		for i, keyName := range vis {
+			meta := infoByKey[keyName]
+			ttl := "∞"
+			if meta.TTL >= 0 {
+				ttl = fmt.Sprintf("%ds", meta.TTL)
+			}
+			row := fmt.Sprintf("  %-28s  %-8s  ttl:%s", keyName, meta.Type, ttl)
+			if lipgloss.Width(row) > w {
+				row = ansi.Truncate(row, w-1, "…")
+			}
+			if i == m.tableCursor && focused {
+				row = styleSelectedRow.Width(w).Render("▸ " + strings.TrimPrefix(row, "  "))
+			}
+			lines = append(lines, row)
+		}
+		m.tableOverviewVP.SetContent(strings.Join(lines, "\n"))
+		return
+	}
+
+	if kind == providers.EngineDocument {
+		m.erdLayout = nil
+		vis := m.visibleTables()
+		if len(vis) == 0 {
+			m.tableOverviewVP.SetContent(styleMutedText.Render("(no matching collections)"))
+			return
+		}
+		countByCol := make(map[string]int64, len(m.docCollections))
+		for _, c := range m.docCollections {
+			countByCol[c.Name] = c.Count
+		}
+		var lines []string
+		for i, colName := range vis {
+			row := fmt.Sprintf("  %-32s  (%d docs)", colName, countByCol[colName])
+			if lipgloss.Width(row) > w {
+				row = ansi.Truncate(row, w-1, "…")
+			}
+			if i == m.tableCursor && focused {
+				row = styleSelectedRow.Width(w).Render("▸ " + strings.TrimPrefix(row, "  "))
+			}
+			lines = append(lines, row)
+		}
+		m.tableOverviewVP.SetContent(strings.Join(lines, "\n"))
+		return
+	}
+
 	if m.tableViewDiagram {
 		m.erdLayout = buildTableOverviewERDWithZoom(m.detailTables, m.tableSchema, m.tableCursor, focused, m.tableShowFields, m.erdZoom)
 		if m.erdLayout != nil && m.erdLayout.canvas != nil {
@@ -63,6 +130,16 @@ func (m *dashboardModel) renderTableDetailToVP() {
 	if m.tableDetail == nil {
 		return
 	}
+	if m.tableDetail.kind != "" && m.tableDetail.kind != providers.EngineSQL {
+		title := "Key: " + m.tableDetail.tableName
+		if m.tableDetail.kind == providers.EngineDocument {
+			title = "Collection: " + m.tableDetail.tableName + " (sample documents)"
+		}
+		content := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render(title) + "\n\n" + m.tableDetail.rawText
+		m.tableDetailVP.SetContent(content)
+		m.tableDetailVP.GotoTop()
+		return
+	}
 	w := max(24, m.tableDetailVP.Width)
 	var b strings.Builder
 
@@ -89,15 +166,21 @@ func (m *dashboardModel) renderTableDetailToVP() {
 
 func (m *dashboardModel) renderQueryResultToVP() {
 	if m.queryErr != nil {
-		m.queryVP.SetContent(styleErrorText.Render("SQL Error:\n" + m.queryErr.Error()))
+		m.queryVP.SetContent(styleErrorText.Render("Error:\n" + m.queryErr.Error()))
 		m.queryVP.GotoTop()
 		return
 	}
 	if m.queryResult == nil {
-		m.queryVP.SetContent(styleMutedText.Render("Press 'i' or Enter to type a SQL query."))
+		m.queryVP.SetContent(styleMutedText.Render("Press 'i' or Enter to write a query/command."))
 		return
 	}
 	dur := m.queryResult.duration.Round(time.Millisecond)
+	if m.queryResult.rawOutput != "" {
+		header := styleMutedText.Render(fmt.Sprintf("Executed in %s  •  c: copy output", dur))
+		m.queryVP.SetContent(header + "\n\n" + m.queryResult.rawOutput)
+		m.queryVP.GotoTop()
+		return
+	}
 	if !m.queryResult.isSelect {
 		m.queryVP.SetContent(styleToastOK.Render(fmt.Sprintf("✓ Query executed (%d row(s) affected) in %s", m.queryResult.affected, dur)))
 		m.queryVP.GotoTop()
@@ -242,8 +325,19 @@ func (m dashboardModel) renderLeftPane(width, height int) string {
 	return paneStyle.Width(width).Height(height).Render(b.String())
 }
 
+func (m dashboardModel) tabLabels() []string {
+	switch m.selectedEngineKind() {
+	case providers.EngineKV:
+		return []string{"[1] Info", "[2] Logs", "[3] Keys", "[4] Console"}
+	case providers.EngineDocument:
+		return []string{"[1] Info", "[2] Logs", "[3] Collections", "[4] Query"}
+	default:
+		return []string{"[1] Info", "[2] Logs", "[3] Tables", "[4] Query"}
+	}
+}
+
 func (m dashboardModel) renderRightPane(width, height int) string {
-	tabs := []string{"[1] Info", "[2] Logs", "[3] Tables", "[4] Query"}
+	tabs := m.tabLabels()
 	var tabParts []string
 	for i, t := range tabs {
 		if i == m.activeTab {
@@ -309,19 +403,30 @@ func (m dashboardModel) renderInfoTab(e *dbEntry) string {
 		pass = db.GetPassword()
 	}
 
+	provLabel := fmt.Sprintf("%s (%s)", db.Provider, db.Version)
+	if db.Preset != "" {
+		provLabel += fmt.Sprintf(" [%s]", db.Preset)
+	}
 	rows := [][2]string{
 		{"Name", db.Name},
-		{"Provider", fmt.Sprintf("%s (%s)", db.Provider, db.Version)},
+		{"Provider", provLabel},
 		{"Group", service.GroupLabel(db.Group)},
 		{"Status", statusStr},
 		{"Port", fmt.Sprintf("127.0.0.1:%d", db.Port)},
-		{"Database", db.DatabaseName},
-		{"User", db.GetUsername()},
-		{"Password", pass},
-		{"Container", db.ContainerName},
-		{"Volume", db.VolumeName},
-		{"Created", db.CreatedAt.Format("2006-01-02 15:04")},
 	}
+	if db.CustomImage != "" {
+		rows = append(rows, [2]string{"Image", db.CustomImage})
+	}
+	if m.selectedEngineKind() != providers.EngineKV {
+		rows = append(rows, [2]string{"Database", db.DatabaseName})
+	}
+	rows = append(rows,
+		[2]string{"User", db.GetUsername()},
+		[2]string{"Password", pass},
+		[2]string{"Container", db.ContainerName},
+		[2]string{"Volume", db.VolumeName},
+		[2]string{"Created", db.CreatedAt.Format("2006-01-02 15:04")},
+	)
 
 	var b strings.Builder
 	for _, r := range rows {
@@ -352,6 +457,35 @@ func (m dashboardModel) renderLogsTab() string {
 func (m dashboardModel) renderTablesTab() string {
 	if m.detailErr != nil {
 		return styleMutedText.Render(m.detailErr.Error())
+	}
+
+	kind := m.selectedEngineKind()
+	if kind != providers.EngineSQL {
+		var b strings.Builder
+		if m.selectedTable != "" {
+			b.WriteString(styleMutedText.Render("Esc: back  •  ↑/↓: scroll  •  Q: run in Console/Query") + "\n")
+			if m.tableDetail == nil {
+				b.WriteString(styleMutedText.Render("Loading details..."))
+			} else {
+				b.WriteString(m.tableDetailVP.View())
+			}
+			return b.String()
+		}
+		itemLabel := "keys"
+		if kind == providers.EngineDocument {
+			itemLabel = "collections"
+		}
+		if len(m.detailTables) == 0 {
+			return styleMutedText.Render(fmt.Sprintf("(no %s found)", itemLabel))
+		}
+		b.WriteString(styleMutedText.Render("Enter: inspect  •  Q: query  •  /: filter  •  r: refresh") + "\n")
+		if m.tableFiltering {
+			b.WriteString("Filter: " + m.tableFilterInput.View() + "\n")
+		} else if q := strings.TrimSpace(m.tableFilterInput.Value()); q != "" {
+			b.WriteString(styleMutedText.Render("Filter: "+q+" (Esc to clear)") + "\n")
+		}
+		b.WriteString(m.tableOverviewVP.View())
+		return b.String()
 	}
 
 	viewBadge := styleMutedText.Render("view:list")

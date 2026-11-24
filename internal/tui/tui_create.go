@@ -18,11 +18,13 @@ const (
 	createOptionCustomVersion = "Other (enter tag manually)"
 	createOptionGlobalGroup   = "Global (no group)"
 	createOptionNewGroup      = "New group..."
+	createOptionNoPreset      = "None (standard)"
 )
 
 const (
 	stepName = iota
 	stepProvider
+	stepPreset
 	stepVersion
 	stepPort
 	stepGroup
@@ -45,6 +47,7 @@ type createModel struct {
 	// Collected values
 	dbName       string
 	provider     string
+	preset       string
 	version      string
 	port         int
 	group        string
@@ -100,17 +103,27 @@ func (m *createModel) prepareStep() {
 		m.input.Focus()
 
 	case stepProvider:
-		m.options = []string{utils.ProviderMySQL, utils.ProviderPostgres}
+		m.options = providers.SupportedProviderNames()
 		for i, o := range m.options {
 			if o == m.provider {
 				m.cursor = i
 			}
 		}
 
+	case stepPreset:
+		m.options = append([]string{createOptionNoPreset}, providers.KnownPresets(m.provider)...)
+		for i, o := range m.options {
+			if o == m.preset {
+				m.cursor = i
+				break
+			}
+		}
+
 	case stepVersion:
+		prov, _ := providers.For(m.provider)
 		defVer := providers.DefaultMySQLVersion
-		if m.provider == utils.ProviderPostgres {
-			defVer = providers.DefaultPostgresVersion
+		if prov != nil {
+			defVer = prov.GetDefaultVersion()
 		}
 		known := providers.KnownVersions(m.provider)
 		for _, v := range known {
@@ -129,9 +142,10 @@ func (m *createModel) prepareStep() {
 		}
 
 	case stepPort:
+		prov, _ := providers.For(m.provider)
 		m.defaultPort = providers.DefaultMySQLPort
-		if m.provider == utils.ProviderPostgres {
-			m.defaultPort = providers.DefaultPostgresPort
+		if prov != nil {
+			m.defaultPort = prov.GetDefaultPort()
 		}
 		m.suggestPort = service.NextFreePort(m.stateMgr, m.defaultPort)
 		m.portHints = service.PortAvailabilityRows(m.stateMgr, m.defaultPort, m.suggestPort)
@@ -215,8 +229,14 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.step--
+			if m.step == stepSeed && !m.isSQLProvider() {
+				m.step = stepRootPassword
+			}
 			if (m.step == stepUserPassword || m.step == stepUsername) && !m.createUser {
 				m.step = stepAskUser
+			}
+			if m.step == stepPreset && len(providers.KnownPresets(m.provider)) == 0 {
+				m.step = stepProvider
 			}
 			m.prepareStep()
 			return m, nil
@@ -246,12 +266,20 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m createModel) isSQLProvider() bool {
+	prov, err := providers.For(m.provider)
+	if err != nil {
+		return true
+	}
+	return prov.Kind() == providers.EngineSQL
+}
+
 func (m createModel) isSelectStep() bool {
 	if m.customMode {
 		return false
 	}
 	switch m.step {
-	case stepProvider, stepVersion, stepGroup, stepAskUser:
+	case stepProvider, stepPreset, stepVersion, stepGroup, stepAskUser:
 		return true
 	}
 	return false
@@ -275,8 +303,23 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 		chosen := m.options[m.cursor]
 		if chosen != m.provider {
 			m.provider = chosen
+			m.preset = ""
 			m.version = ""
 			m.port = 0
+		}
+		if len(providers.KnownPresets(m.provider)) > 0 {
+			m.step = stepPreset
+		} else {
+			m.step = stepVersion
+		}
+		m.prepareStep()
+
+	case stepPreset:
+		chosen := m.options[m.cursor]
+		if chosen == createOptionNoPreset {
+			m.preset = ""
+		} else {
+			m.preset = chosen
 		}
 		m.step = stepVersion
 		m.prepareStep()
@@ -358,7 +401,15 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 			val = gen
 		}
 		m.rootPassword = val
-		m.step = stepAskUser
+		if !m.isSQLProvider() {
+			m.createUser = false
+			m.username = ""
+			m.userPassword = ""
+			m.seedPath = ""
+			m.step = stepReview
+		} else {
+			m.step = stepAskUser
+		}
 		m.prepareStep()
 
 	case stepAskUser:
@@ -455,7 +506,11 @@ func (m createModel) renderSummaryGrid(innerWidth int) string {
 		pairs = append(pairs, [2]string{"Name", m.dbName})
 	}
 	if m.step > stepProvider {
-		pairs = append(pairs, [2]string{"Provider", m.provider})
+		provLabel := m.provider
+		if m.preset != "" {
+			provLabel += " (" + m.preset + ")"
+		}
+		pairs = append(pairs, [2]string{"Provider", provLabel})
 	}
 	if m.version != "" && m.step > stepVersion {
 		pairs = append(pairs, [2]string{"Version", m.version})
@@ -585,6 +640,8 @@ func (m createModel) stepPromptTitle() string {
 		return "Database name:"
 	case stepProvider:
 		return "Select database provider:"
+	case stepPreset:
+		return fmt.Sprintf("Select %s preset (optional):", m.provider)
 	case stepVersion:
 		if m.customMode {
 			return fmt.Sprintf("Enter custom %s Docker tag:", m.provider)
@@ -614,15 +671,15 @@ func (m createModel) stepPromptTitle() string {
 }
 
 // RunCreateTUI launches the Bubble Tea interactive create flow.
-func RunCreateTUI(stateMgr *state.Manager) (dbName, provider, version string, port int, group, rootPassword string, createUser bool, username, userPassword, seedPath string, ok bool) {
+func RunCreateTUI(stateMgr *state.Manager) (dbName, provider, preset, version string, port int, group, rootPassword string, createUser bool, username, userPassword, seedPath string, ok bool) {
 	p := tea.NewProgram(newCreateModel(stateMgr))
 	res, err := p.Run()
 	if err != nil {
-		return "", "", "", 0, "", "", false, "", "", "", false
+		return "", "", "", "", 0, "", "", false, "", "", "", false
 	}
 	m, valid := res.(createModel)
 	if !valid || !m.done || m.quit {
-		return "", "", "", 0, "", "", false, "", "", "", false
+		return "", "", "", "", 0, "", "", false, "", "", "", false
 	}
-	return m.dbName, m.provider, m.version, m.port, m.group, m.rootPassword, m.createUser, m.username, m.userPassword, m.seedPath, true
+	return m.dbName, m.provider, m.preset, m.version, m.port, m.group, m.rootPassword, m.createUser, m.username, m.userPassword, m.seedPath, true
 }

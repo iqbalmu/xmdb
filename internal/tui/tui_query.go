@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/iqbalmu/xmdb/internal/providers"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 )
 
 const (
@@ -154,7 +153,13 @@ func exportQueryResult(res *sqlQueryResult, format, outPath string) (string, err
 }
 
 func buildTableSelectQuery(provider, tableName string) string {
-	if provider == utils.ProviderMySQL {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "redis", "valkey":
+		return fmt.Sprintf("GET %q", tableName)
+	case "mongodb":
+		return fmt.Sprintf("db.getCollection(%q).find({}).limit(20).toArray()", tableName)
+	}
+	if providers.IsMySQLFamily(provider) {
 		return fmt.Sprintf("SELECT * FROM %s LIMIT 50;", providers.QuoteIdentMySQL(tableName))
 	}
 	return fmt.Sprintf("SELECT * FROM %s LIMIT 50;", providers.QuoteTablePG(tableName))

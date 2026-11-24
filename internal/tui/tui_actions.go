@@ -71,16 +71,42 @@ func loadDetailCmd(runtimeMode string, entry *dbEntry, tab int) tea.Cmd {
 			if err != nil {
 				return msgDetailLoaded{name: db.Name, tab: tab, err: err}
 			}
-			sqlProv, ok := providers.AsSQL(prov)
-			if !ok {
-				return msgDetailLoaded{name: db.Name, tab: tab, err: fmt.Errorf("provider '%s' does not support SQL table browsing", db.Provider)}
-			}
-			conn, err := sqlProv.Connect(&providers.DBConfig{
+			adminCfg := &providers.DBConfig{
 				Host:         "127.0.0.1",
 				Port:         db.Port,
 				RootPassword: db.RootPassword,
 				DatabaseName: db.DatabaseName,
-			})
+			}
+
+			if kvProv, ok := providers.AsKV(prov); ok {
+				keys, err := kvProv.ScanKeys(context.Background(), adminCfg, "*", 200)
+				if err != nil {
+					return msgDetailLoaded{name: db.Name, tab: tab, err: err}
+				}
+				names := make([]string, 0, len(keys))
+				for _, k := range keys {
+					names = append(names, k.Key)
+				}
+				return msgDetailLoaded{name: db.Name, tab: tab, tables: names, kvKeys: keys}
+			}
+
+			if docProv, ok := providers.AsDocument(prov); ok {
+				cols, err := fetchMongoCollections(context.Background(), runtimeMode, db, docProv)
+				if err != nil {
+					return msgDetailLoaded{name: db.Name, tab: tab, err: err}
+				}
+				names := make([]string, 0, len(cols))
+				for _, c := range cols {
+					names = append(names, c.Name)
+				}
+				return msgDetailLoaded{name: db.Name, tab: tab, tables: names, docCollections: cols}
+			}
+
+			sqlProv, ok := providers.AsSQL(prov)
+			if !ok {
+				return msgDetailLoaded{name: db.Name, tab: tab, err: fmt.Errorf("provider '%s' does not support table browsing", db.Provider)}
+			}
+			conn, err := sqlProv.Connect(adminCfg)
 			if err != nil {
 				return msgDetailLoaded{name: db.Name, tab: tab, err: err}
 			}
@@ -96,16 +122,16 @@ func loadDetailCmd(runtimeMode string, entry *dbEntry, tab int) tea.Cmd {
 	}
 }
 
-func loadTableDetailCmd(db *state.Database, tableName string) tea.Cmd {
+func loadTableDetailCmd(runtimeMode string, db *state.Database, tableName string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := fetchTableDetail(context.Background(), db, tableName)
+		detail, err := fetchTableDetail(context.Background(), runtimeMode, db, tableName)
 		return msgTableDetailLoaded{dbName: db.Name, detail: detail, err: err}
 	}
 }
 
-func runQuickSQLCmd(db *state.Database, query string) tea.Cmd {
+func runQuickSQLCmd(runtimeMode string, db *state.Database, query string) tea.Cmd {
 	return func() tea.Msg {
-		res, err := executeQuickSQL(context.Background(), db, query)
+		res, err := executeQuickQuery(context.Background(), runtimeMode, db, query)
 		return msgQueryResult{dbName: db.Name, result: res, err: err}
 	}
 }

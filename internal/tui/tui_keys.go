@@ -169,7 +169,7 @@ func (m dashboardModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.queryHistIdx = -1
 			m.queryDraft = ""
 			m.busy = "Running query..."
-			return m, tea.Batch(m.spinner.Tick, runQuickSQLCmd(sel.db, q))
+			return m, tea.Batch(m.spinner.Tick, runQuickSQLCmd(m.runtimeMode, sel.db, q))
 		}
 		m.queryHistIdx = -1
 		var cmd tea.Cmd
@@ -395,7 +395,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					tName := vis[m.tableCursor]
 					m.selectedTable = tName
 					m.busy = fmt.Sprintf("Inspecting '%s'...", tName)
-					return m, tea.Batch(m.spinner.Tick, loadTableDetailCmd(sel.db, tName))
+					return m, tea.Batch(m.spinner.Tick, loadTableDetailCmd(m.runtimeMode, sel.db, tName))
 				}
 			}
 		} else if m.activeTab == 3 && msg.String() == "enter" {
@@ -528,7 +528,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.queryHistIdx = -1
 			m.queryDraft = ""
 			m.busy = "Running query..."
-			return m, tea.Batch(m.spinner.Tick, runQuickSQLCmd(sel.db, q))
+			return m, tea.Batch(m.spinner.Tick, runQuickSQLCmd(m.runtimeMode, sel.db, q))
 		}
 
 	case "e":
@@ -554,7 +554,16 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.setToast(fmt.Sprintf("Copied connection string for '%s'", sel.db.Name), false)
 			}
 		} else if m.activeTab == 3 {
-			if m.queryResult == nil || !m.queryResult.isSelect {
+			if m.queryResult == nil {
+				return m, m.setToast("Run a query before copying", true)
+			}
+			if m.queryResult.rawOutput != "" {
+				if err := clipboard.WriteAll(m.queryResult.rawOutput); err != nil {
+					return m, m.setToast(fmt.Sprintf("Clipboard error: %v", err), true)
+				}
+				return m, m.setToast("Copied command output to clipboard", false)
+			}
+			if !m.queryResult.isSelect {
 				return m, m.setToast("Run a SELECT query before copying", true)
 			}
 			data, err := formatQueryResultJSON(m.queryResult)

@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/iqbalmu/xmdb/pkg/utils"
+	"github.com/iqbalmu/xmdb/internal/providers"
 )
 
 func fetchTableSchemaGraph(ctx context.Context, conn *sql.DB, provider, dbName string, tables []string) *tableSchemaGraph {
@@ -24,7 +24,7 @@ func fetchTableSchemaGraph(ctx context.Context, conn *sql.DB, provider, dbName s
 		return graph
 	}
 
-	if provider == utils.ProviderMySQL {
+	if providers.IsMySQLFamily(provider) {
 		colRows, err := conn.QueryContext(ctx, `
 			SELECT table_name, column_name, column_type, is_nullable, column_key, COALESCE(column_default, '')
 			FROM information_schema.columns

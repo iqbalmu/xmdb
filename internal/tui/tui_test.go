@@ -53,6 +53,41 @@ func TestCreateModelStepNavigation(t *testing.T) {
 	}
 }
 
+func TestDashboardAdaptiveTabLabels(t *testing.T) {
+	m := newDashboardModel()
+	m.entries = []dbEntry{
+		{db: &state.Database{Name: "pg1", Provider: "postgres", Port: 5432}},
+		{db: &state.Database{Name: "rd1", Provider: "redis", Port: 6379}},
+		{db: &state.Database{Name: "mg1", Provider: "mongodb", Port: 27017}},
+	}
+	m.applyFilter()
+
+	findAndSelect := func(name string) {
+		for i, r := range m.rows {
+			if !r.isGroup && r.entry != nil && r.entry.db.Name == name {
+				m.cursor = i
+				return
+			}
+		}
+		t.Fatalf("entry %q not found", name)
+	}
+
+	findAndSelect("pg1")
+	if got := strings.Join(m.tabLabels(), "|"); !strings.Contains(got, "[3] Tables|[4] Query") {
+		t.Errorf("postgres tabs = %q", got)
+	}
+
+	findAndSelect("rd1")
+	if got := strings.Join(m.tabLabels(), "|"); !strings.Contains(got, "[3] Keys|[4] Console") {
+		t.Errorf("redis tabs = %q", got)
+	}
+
+	findAndSelect("mg1")
+	if got := strings.Join(m.tabLabels(), "|"); !strings.Contains(got, "[3] Collections|[4] Query") {
+		t.Errorf("mongodb tabs = %q", got)
+	}
+}
+
 func TestDashboardModelFilterAndTabs(t *testing.T) {
 	m := newDashboardModel()
 	m.entries = []dbEntry{

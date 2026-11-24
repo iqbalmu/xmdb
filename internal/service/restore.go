@@ -12,7 +12,7 @@ import (
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
-// RestoreOptions controls safety behavior when restoring from a SQL file.
+// RestoreOptions controls safety behavior when restoring from a backup file.
 type RestoreOptions struct {
 	NoSnapshot bool
 	OnProgress func(string)
@@ -49,10 +49,6 @@ func RestoreDatabaseWithOptions(ctx context.Context, runtimeMode, name, backupFi
 	if err != nil {
 		return "", 0, "", err
 	}
-	snapProv, ok := providers.AsSnapshot(prov)
-	if !ok {
-		return "", 0, "", fmt.Errorf("provider '%s' does not support restore", db.Provider)
-	}
 
 	dockerMgr, err := container.NewDockerManager(runtimeMode)
 	if err != nil {
@@ -82,20 +78,29 @@ func RestoreDatabaseWithOptions(ctx context.Context, runtimeMode, name, backupFi
 		}
 	}
 
-	sqlFile, err := os.Open(absPath)
+	f, err := os.Open(absPath)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("reading backup file: %w", err)
 	}
-	defer sqlFile.Close()
+	defer f.Close()
 
-	cmd := snapProv.RestoreCommand(adminDBConfig(db))
-
-	res, err := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, sqlFile, stdout)
-	if err != nil {
-		return "", 0, "", fmt.Errorf("restoring database: %w", err)
-	}
-	if res.ExitCode != 0 {
-		return "", 0, "", fmt.Errorf("restore failed (exit %d):\n%s", res.ExitCode, res.Stderr)
+	var stderr string
+	if kvProv, ok := providers.AsKV(prov); ok {
+		if err := kvProv.RestoreKV(ctx, adminDBConfig(db), f); err != nil {
+			return "", 0, "", fmt.Errorf("restoring KV database: %w", err)
+		}
+	} else if snapProv, ok := providers.AsSnapshot(prov); ok {
+		cmd := snapProv.RestoreCommand(adminDBConfig(db))
+		res, execErr := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, f, stdout)
+		if execErr != nil {
+			return "", 0, "", fmt.Errorf("restoring database: %w", execErr)
+		}
+		if res.ExitCode != 0 {
+			return "", 0, "", fmt.Errorf("restore failed (exit %d):\n%s", res.ExitCode, res.Stderr)
+		}
+		stderr = res.Stderr
+	} else {
+		return "", 0, "", fmt.Errorf("provider '%s' does not support restore", db.Provider)
 	}
 
 	fileInfo, _ := os.Stat(absPath)
@@ -103,5 +108,5 @@ func RestoreDatabaseWithOptions(ctx context.Context, runtimeMode, name, backupFi
 	if fileInfo != nil {
 		sizeBytes = fileInfo.Size()
 	}
-	return absPath, sizeBytes, res.Stderr, nil
+	return absPath, sizeBytes, stderr, nil
 }

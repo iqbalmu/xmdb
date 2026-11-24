@@ -1,7 +1,7 @@
 # xmdb: Database Management CLI
 
 A CLI for managing throwaway development databases as Docker containers.
-Supports MySQL and PostgreSQL with a single consistent interface.
+Supports PostgreSQL (with `pgvector`, `postgis`, `timescaledb` presets), MySQL, MariaDB, Redis, Valkey, and MongoDB with a single consistent interface.
 
 ```
 xmdb create mydb --provider postgres   # container + volume + ready in seconds

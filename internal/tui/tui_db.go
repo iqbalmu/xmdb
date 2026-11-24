@@ -1,25 +1,34 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/iqbalmu/xmdb/internal/container"
 	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 )
+
+type docCollectionInfo struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
 
 type tableDetail struct {
 	tableName   string
+	kind        providers.EngineKind
 	schemaCols  []string
 	schemaRows  [][]string
 	previewCols []string
 	previewRows [][]string
+	rawText     string
 }
 
 type tableColumnInfo struct {
@@ -51,12 +60,13 @@ type tableSchemaGraph struct {
 }
 
 type sqlQueryResult struct {
-	query    string
-	cols     []string
-	rows     [][]string
-	affected int64
-	isSelect bool
-	duration time.Duration
+	query     string
+	cols      []string
+	rows      [][]string
+	affected  int64
+	isSelect  bool
+	rawOutput string
+	duration  time.Duration
 }
 
 func openDBConn(dbState *state.Database) (providers.SQLProvider, *sql.DB, error) {
@@ -80,18 +90,76 @@ func openDBConn(dbState *state.Database) (providers.SQLProvider, *sql.DB, error)
 	return sqlProv, conn, nil
 }
 
-func fetchTableDetail(ctx context.Context, dbState *state.Database, tableName string) (*tableDetail, error) {
+func fetchTableDetail(ctx context.Context, runtimeMode string, dbState *state.Database, tableName string) (*tableDetail, error) {
+	prov, err := providers.For(dbState.Provider)
+	if err != nil {
+		return nil, err
+	}
+
+	adminCfg := &providers.DBConfig{
+		Host:         "127.0.0.1",
+		Port:         dbState.Port,
+		RootPassword: dbState.RootPassword,
+		DatabaseName: dbState.DatabaseName,
+	}
+
+	if kvProv, ok := providers.AsKV(prov); ok {
+		kvDetail, err := kvProv.GetKeyDetail(ctx, adminCfg, tableName)
+		if err != nil {
+			return nil, err
+		}
+		ttlStr := "no expiry"
+		if kvDetail.TTL >= 0 {
+			ttlStr = fmt.Sprintf("%ds", kvDetail.TTL)
+		} else if kvDetail.TTL == -2 {
+			ttlStr = "missing"
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("Key:   %s\n", kvDetail.Key))
+		b.WriteString(fmt.Sprintf("Type:  %s\n", kvDetail.Type))
+		b.WriteString(fmt.Sprintf("TTL:   %s\n", ttlStr))
+		b.WriteString(fmt.Sprintf("Size:  %d\n\n", kvDetail.Size))
+		b.WriteString("Value:\n")
+		b.WriteString(kvDetail.Value)
+		return &tableDetail{
+			tableName: tableName,
+			kind:      providers.EngineKV,
+			rawText:   b.String(),
+		}, nil
+	}
+
+	if docProv, ok := providers.AsDocument(prov); ok {
+		dockerMgr, err := container.NewDockerManager(runtimeMode)
+		if err != nil {
+			return nil, err
+		}
+		var out bytes.Buffer
+		res, err := dockerMgr.Exec(ctx, dbState.ContainerID, dbState.ContainerName,
+			docProv.SampleCollectionCommand(adminCfg, tableName, 25, 0, "{}"), nil, &out)
+		if err != nil {
+			return nil, err
+		}
+		if res.ExitCode != 0 {
+			return nil, fmt.Errorf("sampling collection failed: %s", strings.TrimSpace(res.Stderr))
+		}
+		return &tableDetail{
+			tableName: tableName,
+			kind:      providers.EngineDocument,
+			rawText:   strings.TrimSpace(out.String()),
+		}, nil
+	}
+
 	_, conn, err := openDBConn(dbState)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	detail := &tableDetail{tableName: tableName}
+	detail := &tableDetail{tableName: tableName, kind: providers.EngineSQL}
 
 	var schemaQ string
 	var previewQ string
-	if dbState.Provider == utils.ProviderMySQL {
+	if providers.IsMySQLFamily(dbState.Provider) {
 		quoted := providers.QuoteIdentMySQL(tableName)
 		schemaQ = fmt.Sprintf("DESCRIBE %s", quoted)
 		previewQ = fmt.Sprintf("SELECT * FROM %s LIMIT 25", quoted)
@@ -122,6 +190,94 @@ func fetchTableDetail(ctx context.Context, dbState *state.Database, tableName st
 	}
 
 	return detail, nil
+}
+
+func fetchMongoCollections(ctx context.Context, runtimeMode string, dbState *state.Database, docProv providers.DocumentProvider) ([]docCollectionInfo, error) {
+	dockerMgr, err := container.NewDockerManager(runtimeMode)
+	if err != nil {
+		return nil, err
+	}
+	adminCfg := &providers.DBConfig{
+		Host:         "127.0.0.1",
+		Port:         dbState.Port,
+		RootPassword: dbState.RootPassword,
+		DatabaseName: dbState.DatabaseName,
+	}
+	var out bytes.Buffer
+	res, err := dockerMgr.Exec(ctx, dbState.ContainerID, dbState.ContainerName, docProv.ListCollectionsCommand(adminCfg), nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("listing collections failed: %s", strings.TrimSpace(res.Stderr))
+	}
+	raw := strings.TrimSpace(out.String())
+	if raw == "" {
+		return nil, nil
+	}
+	var cols []docCollectionInfo
+	if err := json.Unmarshal([]byte(raw), &cols); err != nil {
+		return nil, fmt.Errorf("parsing collections: %w", err)
+	}
+	return cols, nil
+}
+
+func executeQuickQuery(ctx context.Context, runtimeMode string, dbState *state.Database, query string) (*sqlQueryResult, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, fmt.Errorf("empty query")
+	}
+
+	prov, err := providers.For(dbState.Provider)
+	if err != nil {
+		return nil, err
+	}
+	adminCfg := &providers.DBConfig{
+		Host:         "127.0.0.1",
+		Port:         dbState.Port,
+		RootPassword: dbState.RootPassword,
+		DatabaseName: dbState.DatabaseName,
+	}
+
+	if kvProv, ok := providers.AsKV(prov); ok {
+		out, dur, err := kvProv.ExecKV(ctx, adminCfg, q)
+		if err != nil {
+			return nil, err
+		}
+		return &sqlQueryResult{
+			query:     q,
+			rawOutput: out,
+			duration:  dur,
+		}, nil
+	}
+
+	if docProv, ok := providers.AsDocument(prov); ok {
+		dockerMgr, err := container.NewDockerManager(runtimeMode)
+		if err != nil {
+			return nil, err
+		}
+		start := time.Now()
+		var out bytes.Buffer
+		res, err := dockerMgr.Exec(ctx, dbState.ContainerID, dbState.ContainerName, docProv.EvalQueryCommand(adminCfg, q), nil, &out)
+		dur := time.Since(start)
+		if err != nil {
+			return nil, err
+		}
+		if res.ExitCode != 0 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(res.Stderr))
+		}
+		text := strings.TrimSpace(out.String())
+		if text == "" {
+			text = "(ok)"
+		}
+		return &sqlQueryResult{
+			query:     q,
+			rawOutput: text,
+			duration:  dur,
+		}, nil
+	}
+
+	return executeQuickSQL(ctx, dbState, q)
 }
 
 func executeQuickSQL(ctx context.Context, dbState *state.Database, query string) (*sqlQueryResult, error) {

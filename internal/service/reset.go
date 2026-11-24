@@ -115,18 +115,30 @@ func ResetDatabaseWithOptions(ctx context.Context, runtimeMode, name string, opt
 		return nil, err
 	}
 
-	if dbState.User != "" {
-		if sqlProv, ok := providers.AsSQL(prov); ok {
-			report(fmt.Sprintf("Provisioning user '%s'...", dbState.User))
+	if sqlProv, ok := providers.AsSQL(prov); ok {
+		postInitProv, hasPostInit := prov.(providers.PostInitProvider)
+		needPostInit := hasPostInit && dbState.Preset != ""
+		if dbState.User != "" || needPostInit {
 			db, err := sqlProv.Connect(adminConfig)
 			if err != nil {
 				CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
 				return nil, fmt.Errorf("connecting to database: %w", err)
 			}
-			if err := sqlProv.CreateUser(ctx, db, dbState.User, dbState.UserPassword, dbState.DatabaseName); err != nil {
-				db.Close()
-				CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
-				return nil, fmt.Errorf("creating user: %w", err)
+			if dbState.User != "" {
+				report(fmt.Sprintf("Provisioning user '%s'...", dbState.User))
+				if err := sqlProv.CreateUser(ctx, db, dbState.User, dbState.UserPassword, dbState.DatabaseName); err != nil {
+					db.Close()
+					CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
+					return nil, fmt.Errorf("creating user: %w", err)
+				}
+			}
+			if needPostInit {
+				report(fmt.Sprintf("Enabling preset '%s' extension...", dbState.Preset))
+				if err := postInitProv.PostInit(ctx, db, dbState.Preset); err != nil {
+					db.Close()
+					CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
+					return nil, fmt.Errorf("enabling preset '%s': %w", dbState.Preset, err)
+				}
 			}
 			db.Close()
 		}

@@ -37,11 +37,41 @@ func (p *PostgresProvider) GetImageName(version string) string {
 	return fmt.Sprintf("postgres:%s", version)
 }
 
-func (p *PostgresProvider) ResolveImage(version, _ string, customImage string) string {
+func (p *PostgresProvider) ResolveImage(version, preset, customImage string) string {
 	if img := strings.TrimSpace(customImage); img != "" {
 		return img
 	}
-	return p.GetImageName(version)
+	if version == "" {
+		version = DefaultPostgresVersion
+	}
+	major := strconv.Itoa(postgresMajor(version))
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "pgvector":
+		return fmt.Sprintf("pgvector/pgvector:pg%s", major)
+	case "postgis":
+		return fmt.Sprintf("postgis/postgis:%s-3.5", major)
+	case "timescaledb":
+		return fmt.Sprintf("timescale/timescaledb:latest-pg%s", major)
+	default:
+		return p.GetImageName(version)
+	}
+}
+
+// PostInit enables the matching Postgres extension when a preset is configured.
+func (p *PostgresProvider) PostInit(ctx context.Context, db *sql.DB, preset string) error {
+	var ext string
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "pgvector":
+		ext = "vector"
+	case "postgis":
+		ext = "postgis"
+	case "timescaledb":
+		ext = "timescaledb"
+	default:
+		return nil
+	}
+	_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %s", QuoteIdentPG(ext)))
+	return err
 }
 
 func (p *PostgresProvider) GetDefaultPort() int {

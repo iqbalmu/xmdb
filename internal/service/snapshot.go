@@ -244,6 +244,10 @@ func snapshotFileName(format string) string {
 		return "data.pgdump"
 	case providers.SnapshotFormatSQLGzip:
 		return "data.sql.gz"
+	case providers.SnapshotFormatKVJSONGzip:
+		return "data.kv.json.gz"
+	case providers.SnapshotFormatMongoArchive:
+		return "data.archive.gz"
 	default:
 		return "data.dump"
 	}
@@ -273,8 +277,9 @@ func CreateSnapshot(ctx context.Context, runtimeMode, dbName, snapName, note str
 	if err != nil {
 		return nil, err
 	}
-	snapProv, ok := providers.AsSnapshot(prov)
-	if !ok {
+	kvProv, isKV := providers.AsKV(prov)
+	snapProv, isSnap := providers.AsSnapshot(prov)
+	if !isKV && !isSnap {
 		return nil, fmt.Errorf("provider '%s' does not support snapshots", db.Provider)
 	}
 
@@ -301,7 +306,13 @@ func CreateSnapshot(ctx context.Context, runtimeMode, dbName, snapName, note str
 		return nil, err
 	}
 
-	cmd, format := snapProv.SnapshotDumpCommand(adminDBConfig(db))
+	var cmd []string
+	var format string
+	if isKV {
+		format = providers.SnapshotFormatKVJSONGzip
+	} else {
+		cmd, format = snapProv.SnapshotDumpCommand(adminDBConfig(db))
+	}
 	id := generateSnapshotID(now)
 	fileName := snapshotFileName(format)
 
@@ -331,30 +342,43 @@ func CreateSnapshot(ctx context.Context, runtimeMode, dbName, snapName, note str
 		return nil, fmt.Errorf("creating snapshot payload: %w", err)
 	}
 
-	var outWriter io.Writer = f
-	var gz *gzip.Writer
-	if format == providers.SnapshotFormatSQLGzip {
-		gz = gzip.NewWriter(f)
-		outWriter = gz
-	}
+	if isKV {
+		dumpErr := kvProv.DumpKV(ctx, adminDBConfig(db), f)
+		closeErr := f.Close()
+		if dumpErr != nil {
+			os.RemoveAll(dir)
+			return nil, fmt.Errorf("creating KV snapshot: %w", dumpErr)
+		}
+		if closeErr != nil {
+			os.RemoveAll(dir)
+			return nil, fmt.Errorf("finalizing KV snapshot: %w", closeErr)
+		}
+	} else {
+		var outWriter io.Writer = f
+		var gz *gzip.Writer
+		if format == providers.SnapshotFormatSQLGzip {
+			gz = gzip.NewWriter(f)
+			outWriter = gz
+		}
 
-	res, execErr := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, nil, outWriter)
-	if gz != nil {
-		if closeErr := gz.Close(); closeErr != nil && execErr == nil {
+		res, execErr := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, nil, outWriter)
+		if gz != nil {
+			if closeErr := gz.Close(); closeErr != nil && execErr == nil {
+				execErr = closeErr
+			}
+		}
+		if closeErr := f.Close(); closeErr != nil && execErr == nil {
 			execErr = closeErr
 		}
-	}
-	if closeErr := f.Close(); closeErr != nil && execErr == nil {
-		execErr = closeErr
-	}
 
-	if execErr != nil {
-		os.RemoveAll(dir)
-		return nil, fmt.Errorf("creating snapshot: %w", execErr)
-	}
-	if res.ExitCode != 0 {
-		os.RemoveAll(dir)
-		return nil, fmt.Errorf("creating snapshot (exit %d):\n%s", res.ExitCode, res.Stderr)
+		if execErr != nil {
+			os.RemoveAll(dir)
+			return nil, fmt.Errorf("creating snapshot: %w", execErr)
+		}
+		if res.ExitCode != 0 {
+			os.RemoveAll(dir)
+			return nil, fmt.Errorf("creating snapshot (exit %d):\n%s", res.ExitCode, res.Stderr)
+		}
 	}
 
 	if err := os.Rename(tmpPath, dataPath); err != nil {
@@ -472,17 +496,21 @@ func RestoreSnapshot(ctx context.Context, runtimeMode, dbName, ref string, opts 
 
 // StreamSnapshotToDatabase streams a saved snapshot payload into target.
 func StreamSnapshotToDatabase(ctx context.Context, dockerMgr *container.DockerManager, prov providers.Provider, target *state.Database, snapMgr *SnapshotManager, meta *SnapshotMeta) error {
-	snapProv, ok := providers.AsSnapshot(prov)
-	if !ok {
-		return fmt.Errorf("provider '%s' does not support snapshot restore", target.Provider)
-	}
-
 	dataPath := snapMgr.DataPath(meta)
 	f, err := os.Open(dataPath)
 	if err != nil {
 		return fmt.Errorf("opening snapshot payload: %w", err)
 	}
 	defer f.Close()
+
+	if kvProv, ok := providers.AsKV(prov); ok {
+		return kvProv.RestoreKV(ctx, adminDBConfig(target), f)
+	}
+
+	snapProv, ok := providers.AsSnapshot(prov)
+	if !ok {
+		return fmt.Errorf("provider '%s' does not support snapshot restore", target.Provider)
+	}
 
 	var reader io.Reader = f
 	if meta.Format == providers.SnapshotFormatSQLGzip {
@@ -545,7 +573,7 @@ func resetDatabaseContentsForRestore(ctx context.Context, prov providers.Provide
 		return nil
 	}
 
-	if dbState.Provider == utils.ProviderMySQL {
+	if providers.IsMySQLFamily(dbState.Provider) {
 		conn, err := sqlProv.Connect(adminDBConfig(dbState))
 		if err != nil {
 			return err

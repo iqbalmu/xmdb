@@ -45,8 +45,9 @@ func CloneDatabase(ctx context.Context, runtimeMode string, stateMgr *state.Mana
 	if err != nil {
 		return nil, nil, err
 	}
-	snapProv, ok := providers.AsSnapshot(prov)
-	if !ok {
+	kvProv, isKV := providers.AsKV(prov)
+	snapProv, isSnap := providers.AsSnapshot(prov)
+	if !isKV && !isSnap {
 		return nil, nil, fmt.Errorf("provider '%s' does not support cloning", src.Provider)
 	}
 
@@ -161,6 +162,28 @@ func CloneDatabase(ctx context.Context, runtimeMode string, stateMgr *state.Mana
 	}
 
 	report(fmt.Sprintf("Streaming data from '%s' to '%s'...", src.Name, targetState.Name))
+	if isKV {
+		pr, pw := io.Pipe()
+		dumpErrCh := make(chan error, 1)
+		go func() {
+			err := kvProv.DumpKV(ctx, adminDBConfig(src), pw)
+			_ = pw.CloseWithError(err)
+			dumpErrCh <- err
+		}()
+		restoreErr := kvProv.RestoreKV(ctx, adminDBConfig(targetState), pr)
+		_ = pr.Close()
+		dumpErr := <-dumpErrCh
+		if restoreErr != nil || dumpErr != nil {
+			report("Clone failed; rolling back target database...")
+			RollbackProvisionedDatabase(ctx, runtimeMode, stateMgr, targetState)
+			if restoreErr != nil {
+				return nil, nil, restoreErr
+			}
+			return nil, nil, dumpErr
+		}
+		return targetState, targetCfg, nil
+	}
+
 	if err := streamCloneData(ctx, dockerMgr, snapProv, src, targetState); err != nil {
 		report("Clone failed; rolling back target database...")
 		RollbackProvisionedDatabase(ctx, runtimeMode, stateMgr, targetState)
