@@ -472,6 +472,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.explorerRowCursor > 0 {
 					m.explorerRowCursor--
 					m.renderTableDetailToVP()
+					m.followExplorerCursor()
 					return m, nil
 				}
 			}
@@ -494,6 +495,7 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.explorerRowCursor < len(m.tableDetail.previewRows)-1 {
 					m.explorerRowCursor++
 					m.renderTableDetailToVP()
+					m.followExplorerCursor()
 					return m, nil
 				}
 			}

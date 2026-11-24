@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
 )
@@ -142,5 +143,59 @@ func TestLiveMetricsCardAndCommandPalette(t *testing.T) {
 	m = next.(dashboardModel)
 	if m.modal != modalRowInspect || !strings.Contains(m.rowInspectState.jsonStr, "Bob") {
 		t.Fatalf("expected Row Inspector modal for Bob, got modal=%d json=%q", m.modal, m.rowInspectState.jsonStr)
+	}
+}
+
+func TestExplorerRowCursorScrollsIntoView(t *testing.T) {
+	m := newDashboardModel()
+	m.tableDetailVP = viewport.New(40, 5) // 5 visible lines, 12 rows
+	rows := make([][]string, 12)
+	for i := range rows {
+		rows[i] = []string{"v"}
+	}
+	m.tableDetail = &tableDetail{
+		tableName:   "t",
+		kind:        providers.EngineSQL,
+		previewCols: []string{"a"},
+		previewRows: rows,
+		totalRows:   int64(len(rows)),
+		pageSize:    defaultExplorerPageSize,
+	}
+	m.focusPane = 1
+	m.activeTab = 2
+	m.selectedTable = "t"
+	m.tableViewDiagram = false
+	m.tableShowFields = false
+	m.renderTableDetailToVP()
+
+	// Walk to the last row; viewport must scroll so the selected row stays visible.
+	for range 11 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(dashboardModel)
+	}
+	if m.explorerRowCursor != 11 {
+		t.Fatalf("expected cursor at last row, got %d", m.explorerRowCursor)
+	}
+	if m.tableDetailVP.YOffset+m.tableDetailVP.Height <= m.explorerCursorLine {
+		t.Fatalf("selected row %d below viewport: YOffset=%d height=%d",
+			m.explorerCursorLine, m.tableDetailVP.YOffset, m.tableDetailVP.Height)
+	}
+
+	// Walk back to the first row; it must be visible again.
+	for range 11 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m = next.(dashboardModel)
+	}
+	if m.tableDetailVP.YOffset > m.explorerCursorLine || m.explorerCursorLine >= m.tableDetailVP.YOffset+m.tableDetailVP.Height {
+		t.Fatalf("row 0 (line %d) not visible: YOffset=%d height=%d",
+			m.explorerCursorLine, m.tableDetailVP.YOffset, m.tableDetailVP.Height)
+	}
+
+	// Fresh detail load resets the view to the top (schema visible).
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(dashboardModel)
+	m.renderTableDetailToVP()
+	if m.tableDetailVP.YOffset != 0 {
+		t.Fatalf("expected fresh render at top, got YOffset=%d", m.tableDetailVP.YOffset)
 	}
 }

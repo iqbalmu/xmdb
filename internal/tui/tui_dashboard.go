@@ -152,6 +152,7 @@ type dashboardModel struct {
 	tableFilterInput    textinput.Model
 	explorerOpts        tableExplorerOpts
 	explorerRowCursor   int
+	explorerCursorLine  int // rendered line index of the selected preview row (-1 when none)
 	explorerFiltering   bool
 	explorerFilterInput textinput.Model
 	erdXOffset          int

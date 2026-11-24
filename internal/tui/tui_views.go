@@ -194,6 +194,24 @@ func (m *dashboardModel) renderTableDetailToVP() {
 	}
 	m.tableDetailVP.SetContent(b.String())
 	m.tableDetailVP.GotoTop()
+	// Preview table is the last block; every line ends with "\n", so the
+	// selected row's line index can be derived from the total newline count.
+	m.explorerCursorLine = -1
+	if n := len(m.tableDetail.previewRows); n > 0 {
+		m.explorerCursorLine = strings.Count(b.String(), "\n") - n + m.explorerRowCursor
+	}
+}
+
+// followExplorerCursor scrolls the detail viewport so the selected preview row stays visible.
+func (m *dashboardModel) followExplorerCursor() {
+	if m.explorerCursorLine < 0 || m.tableDetailVP.Height <= 0 {
+		return
+	}
+	if m.explorerCursorLine < m.tableDetailVP.YOffset {
+		m.tableDetailVP.SetYOffset(m.explorerCursorLine)
+	} else if m.explorerCursorLine >= m.tableDetailVP.YOffset+m.tableDetailVP.Height {
+		m.tableDetailVP.SetYOffset(max(0, m.explorerCursorLine-m.tableDetailVP.Height+1))
+	}
 }
 
 func (m *dashboardModel) renderQueryResultToVP() {
