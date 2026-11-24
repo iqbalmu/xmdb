@@ -11,7 +11,6 @@ import (
 	"github.com/iqbalmu/xmdb/internal/container"
 	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -83,12 +82,20 @@ func runExecFile(dbState *state.Database) error {
 	}
 	defer sqlFile.Close()
 
-	var cmd []string
-	if dbState.Provider == utils.ProviderMySQL {
-		cmd = []string{"mysql", "-uroot", "-p" + dbState.RootPassword, dbState.DatabaseName}
-	} else {
-		cmd = []string{"psql", "-U", "postgres", "-d", dbState.DatabaseName, "-v", "ON_ERROR_STOP=1"}
+	prov, err := providers.For(dbState.Provider)
+	if err != nil {
+		return err
 	}
+	snapProv, ok := providers.AsSnapshot(prov)
+	if !ok {
+		return fmt.Errorf("provider '%s' does not support executing SQL files", dbState.Provider)
+	}
+	cmd := snapProv.RestoreCommand(&providers.DBConfig{
+		Host:         "127.0.0.1",
+		Port:         dbState.Port,
+		RootPassword: dbState.RootPassword,
+		DatabaseName: dbState.DatabaseName,
+	})
 
 	color.Cyan("Running %s on '%s'...\n", execFile, dbState.Name)
 
@@ -112,8 +119,12 @@ func runExecSQL(dbState *state.Database) error {
 	if err != nil {
 		return err
 	}
+	sqlProv, ok := providers.AsSQL(prov)
+	if !ok {
+		return fmt.Errorf("provider '%s' does not support SQL queries", dbState.Provider)
+	}
 
-	db, err := prov.Connect(&providers.DBConfig{
+	db, err := sqlProv.Connect(&providers.DBConfig{
 		Host:         "127.0.0.1",
 		Port:         dbState.Port,
 		RootPassword: dbState.RootPassword,

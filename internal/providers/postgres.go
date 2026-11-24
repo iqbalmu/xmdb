@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -17,11 +18,30 @@ func NewPostgresProvider() *PostgresProvider {
 	return &PostgresProvider{}
 }
 
+func (p *PostgresProvider) Name() string {
+	return "postgres"
+}
+
+func (p *PostgresProvider) Kind() EngineKind {
+	return EngineSQL
+}
+
+func (p *PostgresProvider) GetDefaultVersion() string {
+	return DefaultPostgresVersion
+}
+
 func (p *PostgresProvider) GetImageName(version string) string {
 	if version == "" {
 		version = DefaultPostgresVersion
 	}
 	return fmt.Sprintf("postgres:%s", version)
+}
+
+func (p *PostgresProvider) ResolveImage(version, _ string, customImage string) string {
+	if img := strings.TrimSpace(customImage); img != "" {
+		return img
+	}
+	return p.GetImageName(version)
 }
 
 func (p *PostgresProvider) GetDefaultPort() int {
@@ -71,10 +91,31 @@ func (p *PostgresProvider) GetEnvVars(config *DBConfig) []string {
 	}
 }
 
+func (p *PostgresProvider) GetCommand(_ *DBConfig) []string {
+	return nil
+}
+
 // GetConnectionString returns a display form of the connection details.
 func (p *PostgresProvider) GetConnectionString(config *DBConfig) string {
 	user, password := config.Auth("postgres")
 	return postgresURL(config, user, password, 0)
+}
+
+func (p *PostgresProvider) GetEnvMap(config *DBConfig) map[string]string {
+	user, password := config.Auth("postgres")
+	host := config.Host
+	if host == "" {
+		host = "localhost"
+	}
+	return map[string]string{
+		"DATABASE_URL": p.GetConnectionString(config),
+		"DB_PROVIDER":  p.Name(),
+		"DB_HOST":      host,
+		"DB_PORT":      strconv.Itoa(config.Port),
+		"DB_NAME":      config.DatabaseName,
+		"DB_USER":      user,
+		"DB_PASSWORD":  password,
+	}
 }
 
 // Connect opens a sql.DB over a URL DSN; unlike MySQL's format this one
@@ -82,6 +123,74 @@ func (p *PostgresProvider) GetConnectionString(config *DBConfig) string {
 func (p *PostgresProvider) Connect(config *DBConfig) (*sql.DB, error) {
 	user, password := config.Auth("postgres")
 	return sql.Open("postgres", postgresURL(config, user, password, connectTimeoutSeconds))
+}
+
+func (p *PostgresProvider) Ping(ctx context.Context, cfg *DBConfig) error {
+	db, err := p.Connect(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.PingContext(ctx)
+}
+
+func (p *PostgresProvider) ShellCommand(cfg *DBConfig) []string {
+	return []string{"psql", "-U", "postgres", "-d", cfg.DatabaseName}
+}
+
+func (p *PostgresProvider) BackupCommand(cfg *DBConfig) []string {
+	return []string{
+		"pg_dump",
+		"-U", "postgres",
+		cfg.DatabaseName,
+	}
+}
+
+func (p *PostgresProvider) RestoreCommand(cfg *DBConfig) []string {
+	return []string{
+		"psql",
+		"-U", "postgres",
+		"-d", cfg.DatabaseName,
+		"-v", "ON_ERROR_STOP=1",
+	}
+}
+
+func (p *PostgresProvider) SnapshotDumpCommand(cfg *DBConfig) ([]string, string) {
+	return []string{
+		"pg_dump",
+		"-U", "postgres",
+		"-Fc",
+		"--no-owner",
+		"--no-acl",
+		cfg.DatabaseName,
+	}, SnapshotFormatPGDump
+}
+
+func (p *PostgresProvider) SnapshotRestoreCommand(cfg *DBConfig, format string) []string {
+	if format == SnapshotFormatPGDump {
+		return []string{
+			"pg_restore",
+			"-U", "postgres",
+			"-d", cfg.DatabaseName,
+			"--no-owner",
+			"--no-acl",
+		}
+	}
+	return p.RestoreCommand(cfg)
+}
+
+func (p *PostgresProvider) CloneDumpCommand(cfg *DBConfig) []string {
+	return []string{
+		"pg_dump",
+		"-U", "postgres",
+		"--no-owner",
+		"--no-acl",
+		cfg.DatabaseName,
+	}
+}
+
+func (p *PostgresProvider) CloneRestoreCommand(cfg *DBConfig) []string {
+	return p.RestoreCommand(cfg)
 }
 
 // postgresURL builds the lib/pq DSN; connectTimeout is included only when

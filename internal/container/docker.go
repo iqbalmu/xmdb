@@ -133,6 +133,7 @@ func (d *DockerManager) CreateContainer(ctx context.Context, config *ContainerCo
 	containerConfig := &container.Config{
 		Image: config.Image,
 		Env:   config.Env,
+		Cmd:   config.Cmd,
 		ExposedPorts: nat.PortSet{
 			containerPort: struct{}{},
 		},
@@ -452,12 +453,18 @@ func (d *DockerManager) ListVolumesByPrefix(ctx context.Context, prefix string) 
 	return out, nil
 }
 
+// RenameContainer renames an existing container in place.
+func (d *DockerManager) RenameContainer(ctx context.Context, containerID, oldName, newName string) error {
+	return d.client.ContainerRename(ctx, resolveContainerRef(containerID, oldName), newName)
+}
+
 type ContainerConfig struct {
 	Name          string
 	Image         string
 	Port          int
 	ContainerPort string
 	Env           []string
+	Cmd           []string
 	VolumeName    string
 	VolumePath    string
 }

@@ -24,6 +24,11 @@ func NewManager() (*Manager, error) {
 	}
 
 	stateDir := filepath.Join(homeDir, StateDir, DatabasesDir)
+	return NewManagerAt(stateDir)
+}
+
+// NewManagerAt opens a state manager backed by stateDir, creating it if needed.
+func NewManagerAt(stateDir string) (*Manager, error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}

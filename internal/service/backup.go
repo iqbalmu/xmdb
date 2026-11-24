@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/iqbalmu/xmdb/internal/container"
+	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 )
 
 // BackupDatabase dumps the named database to outputPath (or a timestamped
@@ -23,6 +23,15 @@ func BackupDatabase(ctx context.Context, runtimeMode, name, outputPath string) (
 	db, err := stateMgr.Load(name)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("database '%s' not found", name)
+	}
+
+	prov, err := providers.For(db.Provider)
+	if err != nil {
+		return "", 0, "", err
+	}
+	snapProv, ok := providers.AsSnapshot(prov)
+	if !ok {
+		return "", 0, "", fmt.Errorf("provider '%s' does not support backup", db.Provider)
 	}
 
 	dockerMgr, err := container.NewDockerManager(runtimeMode)
@@ -45,21 +54,7 @@ func BackupDatabase(ctx context.Context, runtimeMode, name, outputPath string) (
 		return "", 0, "", fmt.Errorf("invalid output path: %w", err)
 	}
 
-	var cmd []string
-	if db.Provider == utils.ProviderMySQL {
-		cmd = []string{
-			"mysqldump",
-			"-u", "root",
-			fmt.Sprintf("-p%s", db.RootPassword),
-			db.DatabaseName,
-		}
-	} else {
-		cmd = []string{
-			"pg_dump",
-			"-U", "postgres",
-			db.DatabaseName,
-		}
-	}
+	cmd := snapProv.BackupCommand(adminDBConfig(db))
 
 	dumpFile, err := os.OpenFile(absPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {

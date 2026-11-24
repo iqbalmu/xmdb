@@ -28,8 +28,11 @@ type CreateOptions struct {
 	Name         string
 	Provider     string
 	Version      string
+	Preset       string
+	CustomImage  string
 	Port         int
 	Group        string
+	Project      string
 	RootPassword string
 	CreateUser   bool
 	Username     string
@@ -73,7 +76,7 @@ func ProvisionDatabase(ctx context.Context, runtimeMode string, stateMgr *state.
 		return nil, nil, err
 	}
 
-	imageName := prov.GetImageName(opts.Version)
+	imageName := prov.ResolveImage(opts.Version, opts.Preset, opts.CustomImage)
 	report(fmt.Sprintf("Pulling image %s...", imageName))
 	if err := dockerMgr.PullImage(ctx, imageName); err != nil {
 		return nil, nil, fmt.Errorf("pulling image: %w", err)
@@ -106,6 +109,7 @@ func ProvisionDatabase(ctx context.Context, runtimeMode string, stateMgr *state.
 		Port:          port,
 		ContainerPort: prov.GetContainerPort(),
 		Env:           prov.GetEnvVars(dbConfig),
+		Cmd:           prov.GetCommand(dbConfig),
 		VolumeName:    volumeName,
 		VolumePath:    volumePath,
 	}
@@ -136,27 +140,32 @@ func ProvisionDatabase(ctx context.Context, runtimeMode string, stateMgr *state.
 	}
 
 	if opts.CreateUser && opts.Username != "" {
-		report(fmt.Sprintf("Creating user '%s'...", opts.Username))
+		if sqlProv, ok := providers.AsSQL(prov); ok {
+			report(fmt.Sprintf("Creating user '%s'...", opts.Username))
 
-		db, err := prov.Connect(adminConfig)
-		if err != nil {
-			CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
-			return nil, nil, fmt.Errorf("connecting to database: %w", err)
-		}
+			db, err := sqlProv.Connect(adminConfig)
+			if err != nil {
+				CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
+				return nil, nil, fmt.Errorf("connecting to database: %w", err)
+			}
 
-		if err := prov.CreateUser(ctx, db, opts.Username, opts.UserPassword, opts.Name); err != nil {
+			if err := sqlProv.CreateUser(ctx, db, opts.Username, opts.UserPassword, opts.Name); err != nil {
+				db.Close()
+				CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
+				return nil, nil, fmt.Errorf("creating user: %w", err)
+			}
 			db.Close()
-			CleanupContainer(dockerMgr, ctx, containerID, containerName, volumeName)
-			return nil, nil, fmt.Errorf("creating user: %w", err)
 		}
-		db.Close()
 	}
 
 	dbState := &state.Database{
 		Name:          opts.Name,
 		Provider:      opts.Provider,
 		Version:       opts.Version,
+		Preset:        strings.TrimSpace(opts.Preset),
+		CustomImage:   strings.TrimSpace(opts.CustomImage),
 		Group:         strings.TrimSpace(opts.Group),
+		Project:       strings.TrimSpace(opts.Project),
 		ContainerName: containerName,
 		ContainerID:   containerID,
 		Port:          port,
@@ -238,13 +247,7 @@ func WaitForDatabase(ctx context.Context, dockerMgr *container.DockerManager, co
 		}
 
 		attemptCtx, cancel := context.WithTimeout(ctx, connectAttemptTimeout)
-		db, err := prov.Connect(cfg)
-		if err != nil {
-			lastErr = err
-		} else {
-			lastErr = db.PingContext(attemptCtx)
-			db.Close()
-		}
+		lastErr = prov.Ping(attemptCtx, cfg)
 		cancel()
 		if lastErr == nil {
 			return nil

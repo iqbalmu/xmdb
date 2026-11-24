@@ -8,7 +8,10 @@ type Database struct {
 	Name          string    `json:"name"`
 	Provider      string    `json:"provider"`
 	Version       string    `json:"version"`
+	Preset        string    `json:"preset,omitempty"`
+	CustomImage   string    `json:"custom_image,omitempty"`
 	Group         string    `json:"group,omitempty"`
+	Project       string    `json:"project,omitempty"`
 	ContainerName string    `json:"container_name"`
 	ContainerID   string    `json:"container_id"`
 	Port          int       `json:"port"`

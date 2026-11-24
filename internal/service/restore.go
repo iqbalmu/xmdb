@@ -8,16 +8,33 @@ import (
 	"path/filepath"
 
 	"github.com/iqbalmu/xmdb/internal/container"
+	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 )
 
+// RestoreOptions controls safety behavior when restoring from a SQL file.
+type RestoreOptions struct {
+	NoSnapshot bool
+	OnProgress func(string)
+}
+
 // RestoreDatabase streams backupFile into the named database container without
-// interactive prompts. Output from the restore command is written to stdout.
+// interactive prompts. A safety auto-snapshot is taken first by default.
 func RestoreDatabase(ctx context.Context, runtimeMode, name, backupFile string, stdout io.Writer) (string, int64, string, error) {
+	return RestoreDatabaseWithOptions(ctx, runtimeMode, name, backupFile, RestoreOptions{}, stdout)
+}
+
+// RestoreDatabaseWithOptions streams backupFile into the named database container.
+func RestoreDatabaseWithOptions(ctx context.Context, runtimeMode, name, backupFile string, opts RestoreOptions, stdout io.Writer) (string, int64, string, error) {
 	if stdout == nil {
 		stdout = io.Discard
 	}
+	report := func(msg string) {
+		if opts.OnProgress != nil {
+			opts.OnProgress(msg)
+		}
+	}
+
 	stateMgr, err := state.NewManager()
 	if err != nil {
 		return "", 0, "", err
@@ -26,6 +43,15 @@ func RestoreDatabase(ctx context.Context, runtimeMode, name, backupFile string, 
 	db, err := stateMgr.Load(name)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("database '%s' not found", name)
+	}
+
+	prov, err := providers.For(db.Provider)
+	if err != nil {
+		return "", 0, "", err
+	}
+	snapProv, ok := providers.AsSnapshot(prov)
+	if !ok {
+		return "", 0, "", fmt.Errorf("provider '%s' does not support restore", db.Provider)
 	}
 
 	dockerMgr, err := container.NewDockerManager(runtimeMode)
@@ -47,28 +73,22 @@ func RestoreDatabase(ctx context.Context, runtimeMode, name, backupFile string, 
 		return "", 0, "", fmt.Errorf("backup file not found: %s", absPath)
 	}
 
+	if !opts.NoSnapshot {
+		report("Taking safety auto-snapshot before restore...")
+		if autoMeta, err := CreateAutoSnapshot(ctx, runtimeMode, name, "restore"); err != nil {
+			return "", 0, "", fmt.Errorf("creating safety snapshot (pass --no-snapshot to skip): %w", err)
+		} else if autoMeta != nil {
+			report(fmt.Sprintf("Saved safety snapshot '%s'", autoMeta.Name))
+		}
+	}
+
 	sqlFile, err := os.Open(absPath)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("reading backup file: %w", err)
 	}
 	defer sqlFile.Close()
 
-	var cmd []string
-	if db.Provider == utils.ProviderMySQL {
-		cmd = []string{
-			"mysql",
-			"-u", "root",
-			fmt.Sprintf("-p%s", db.RootPassword),
-			db.DatabaseName,
-		}
-	} else {
-		cmd = []string{
-			"psql",
-			"-U", "postgres",
-			"-d", db.DatabaseName,
-			"-v", "ON_ERROR_STOP=1",
-		}
-	}
+	cmd := snapProv.RestoreCommand(adminDBConfig(db))
 
 	res, err := dockerMgr.Exec(ctx, db.ContainerID, db.ContainerName, cmd, sqlFile, stdout)
 	if err != nil {

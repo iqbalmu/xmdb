@@ -183,20 +183,28 @@ Running `xmdb` without arguments opens the terminal dashboard:
 |---|---|
 | `xmdb` | Launch the interactive TUI dashboard |
 | `xmdb create [name] [-p provider] [-v version] [--port N] [-g group] [--seed path] [-i] [--volume=true]` | Create a database (interactive when no name given); `--seed` runs a `.sql` file or directory of `*.sql` files |
-| `xmdb clone <source> <target> [--port N] [-g group] [-v version]` | Clone a managed database and its data into a new instance |
+| `xmdb clone <source> <target> [--port N] [-g group] [-v version] [--from-snapshot ref]` | Clone a managed database (live or from a saved snapshot) into a new instance |
 | `xmdb list [-g group\|global] [--json]` | List all managed databases, optionally filtered by group (aliases: `ls`) |
 | `xmdb status [-g group\|global] [--json]` | Live status of all containers, optionally filtered by group |
 | `xmdb start [name] [-g group\|global]` | Start a stopped database, or all databases in a group |
 | `xmdb stop [name] [-g group\|global]` | Stop a running database, or all databases in a group |
 | `xmdb remove <name> [-f] [--keep-data]` | Remove container and data volume (`--keep-data` keeps the volume; aliases: `rm`, `delete`) |
-| `xmdb reset <name> [-f]` | Wipe all data and re-initialize with the same port and credentials |
+| `xmdb reset <name> [-f] [--no-snapshot]` | Wipe all data and re-initialize with the same port and credentials (auto-snapshots first by default) |
+| `xmdb rename <old> <new>` | Rename a managed database, its container, and its snapshot directory |
+| `xmdb move <name> -g <group\|global>` | Move a database to another group (`global` clears the group) |
+| `xmdb snapshot create\|list\|restore\|delete <db> [name]` | Take online compressed snapshots and roll back cleanly (alias: `snap`) |
+| `xmdb init [--from-group <group>]` | Generate a project `xmdb.yaml` manifest from template or an existing group |
+| `xmdb up [-f xmdb.yaml] [--reseed] [--sync-env]` | Idempotently provision and start all databases declared in `xmdb.yaml` |
+| `xmdb down [-f xmdb.yaml] [--remove]` | Stop (or remove) all databases declared in `xmdb.yaml` |
+| `xmdb env [db]` / `xmdb env sync [db] [-f .env]` | Print or safely upsert managed `# xmdb:start..end` env vars into `.env` |
+| `xmdb run [db] -- <cmd...>` | Run a command with database env vars injected directly (no `.env` edits) |
 | `xmdb info <name> [--json]` | Detailed database information |
 | `xmdb connect <name> [--format string\|json\|env] [-c\|--copy]` | Show connection information (and optionally copy to clipboard) |
 | `xmdb shell <name>` | Open an interactive SQL shell (`psql`/`mysql`) inside the container (aliases: `sh`, `console`) |
 | `xmdb exec <name> --sql "..." / --file f.sql [--json]` | Execute SQL with table or JSON output |
 | `xmdb logs <name> [-n N] [-f]` | Container logs |
 | `xmdb backup <name> [-o file]` | Dump the database to a local `.sql` file |
-| `xmdb restore <name> <file> [-f]` | Restore from a `.sql` file (prompts before overwriting) |
+| `xmdb restore <name> <file> [-f] [--no-snapshot]` | Restore from a `.sql` file (prompts and auto-snapshots before overwriting) |
 | `xmdb table list <name>` / `xmdb table describe <name> <table>` | Inspect tables |
 | `xmdb provider list` | Show supported providers and defaults |
 | `xmdb doctor [--fix] [-f] [--json]` | Check container runtime, orphan resources, stale states, and port conflicts |

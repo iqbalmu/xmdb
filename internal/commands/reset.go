@@ -11,7 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var resetForce bool
+var (
+	resetForce      bool
+	resetNoSnapshot bool
+)
 
 var resetCmd = &cobra.Command{
 	Use:   "reset <database-name>",
@@ -24,6 +27,7 @@ var resetCmd = &cobra.Command{
 
 func init() {
 	resetCmd.Flags().BoolVarP(&resetForce, "force", "f", false, "Skip confirmation prompt")
+	resetCmd.Flags().BoolVar(&resetNoSnapshot, "no-snapshot", false, "Skip automatic safety snapshot before resetting")
 }
 
 func runReset(name string) error {
@@ -51,7 +55,9 @@ func runReset(name string) error {
 	}
 
 	color.Cyan("\nResetting database '%s'...\n", name)
-	dbState, err := service.ResetDatabase(context.Background(), runtimeMode, name, func(msg string) {
+	dbState, err := service.ResetDatabaseWithOptions(context.Background(), runtimeMode, name, service.ResetOptions{
+		NoSnapshot: resetNoSnapshot,
+	}, func(msg string) {
 		color.White("  %s", msg)
 	})
 	if err != nil {

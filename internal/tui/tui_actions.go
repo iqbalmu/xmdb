@@ -71,7 +71,11 @@ func loadDetailCmd(runtimeMode string, entry *dbEntry, tab int) tea.Cmd {
 			if err != nil {
 				return msgDetailLoaded{name: db.Name, tab: tab, err: err}
 			}
-			conn, err := prov.Connect(&providers.DBConfig{
+			sqlProv, ok := providers.AsSQL(prov)
+			if !ok {
+				return msgDetailLoaded{name: db.Name, tab: tab, err: fmt.Errorf("provider '%s' does not support SQL table browsing", db.Provider)}
+			}
+			conn, err := sqlProv.Connect(&providers.DBConfig{
 				Host:         "127.0.0.1",
 				Port:         db.Port,
 				RootPassword: db.RootPassword,
@@ -81,7 +85,7 @@ func loadDetailCmd(runtimeMode string, entry *dbEntry, tab int) tea.Cmd {
 				return msgDetailLoaded{name: db.Name, tab: tab, err: err}
 			}
 			defer conn.Close()
-			tables, err := prov.ListTables(context.Background(), conn, db.DatabaseName)
+			tables, err := sqlProv.ListTables(context.Background(), conn, db.DatabaseName)
 			if err != nil {
 				return msgDetailLoaded{name: db.Name, tab: tab, tables: tables, err: err}
 			}

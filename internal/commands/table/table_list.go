@@ -35,6 +35,10 @@ func runList(name string) error {
 	if err != nil {
 		return err
 	}
+	sqlProv, ok := providers.AsSQL(prov)
+	if !ok {
+		return fmt.Errorf("provider '%s' does not have SQL tables", dbState.Provider)
+	}
 
 	dbConfig := &providers.DBConfig{
 		Host:         "127.0.0.1",
@@ -43,7 +47,7 @@ func runList(name string) error {
 		DatabaseName: dbState.DatabaseName,
 	}
 
-	db, err := prov.Connect(dbConfig)
+	db, err := sqlProv.Connect(dbConfig)
 	if err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
 	}
@@ -51,7 +55,7 @@ func runList(name string) error {
 
 	ctx := context.Background()
 
-	tables, err := prov.ListTables(ctx, db, dbState.DatabaseName)
+	tables, err := sqlProv.ListTables(ctx, db, dbState.DatabaseName)
 	if err != nil {
 		return fmt.Errorf("listing tables: %w", err)
 	}

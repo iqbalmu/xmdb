@@ -9,9 +9,20 @@ import (
 	"github.com/iqbalmu/xmdb/internal/state"
 )
 
+// ResetOptions configures reset safety behavior.
+type ResetOptions struct {
+	NoSnapshot bool
+}
+
 // ResetDatabase wipes and recreates the named database container and volume,
-// keeping the same port and credentials.
+// keeping the same port and credentials. Takes a safety auto-snapshot first
+// when the container is running.
 func ResetDatabase(ctx context.Context, runtimeMode, name string, onProgress func(string)) (*state.Database, error) {
+	return ResetDatabaseWithOptions(ctx, runtimeMode, name, ResetOptions{}, onProgress)
+}
+
+// ResetDatabaseWithOptions wipes and recreates the named database container and volume.
+func ResetDatabaseWithOptions(ctx context.Context, runtimeMode, name string, opts ResetOptions, onProgress func(string)) (*state.Database, error) {
 	report := func(msg string) {
 		if onProgress != nil {
 			onProgress(msg)
@@ -38,7 +49,16 @@ func ResetDatabase(ctx context.Context, runtimeMode, name string, onProgress fun
 		return nil, err
 	}
 
-	if running, _ := dockerMgr.IsContainerRunning(ctx, dbState.ContainerID, dbState.ContainerName); running {
+	running, _ := dockerMgr.IsContainerRunning(ctx, dbState.ContainerID, dbState.ContainerName)
+	if running {
+		if !opts.NoSnapshot {
+			report("Taking safety auto-snapshot before reset...")
+			if autoMeta, err := CreateAutoSnapshot(ctx, runtimeMode, name, "reset"); err != nil {
+				return nil, fmt.Errorf("creating safety snapshot (pass --no-snapshot to skip): %w", err)
+			} else if autoMeta != nil {
+				report(fmt.Sprintf("Saved safety snapshot '%s'", autoMeta.Name))
+			}
+		}
 		report("Stopping container...")
 		_ = dockerMgr.StopContainer(ctx, dbState.ContainerID, dbState.ContainerName)
 	}
@@ -66,10 +86,11 @@ func ResetDatabase(ctx context.Context, runtimeMode, name string, onProgress fun
 
 	containerConfig := &container.ContainerConfig{
 		Name:          dbState.ContainerName,
-		Image:         prov.GetImageName(dbState.Version),
+		Image:         prov.ResolveImage(dbState.Version, dbState.Preset, dbState.CustomImage),
 		Port:          dbState.Port,
 		ContainerPort: prov.GetContainerPort(),
 		Env:           prov.GetEnvVars(dbConfig),
+		Cmd:           prov.GetCommand(dbConfig),
 		VolumeName:    dbState.VolumeName,
 		VolumePath:    volumePath,
 	}
@@ -86,12 +107,7 @@ func ResetDatabase(ctx context.Context, runtimeMode, name string, onProgress fun
 		return nil, fmt.Errorf("starting container: %w", err)
 	}
 
-	adminConfig := &providers.DBConfig{
-		Host:         "127.0.0.1",
-		Port:         dbState.Port,
-		RootPassword: dbState.RootPassword,
-		DatabaseName: dbState.DatabaseName,
-	}
+	adminConfig := adminDBConfig(dbState)
 
 	report("Waiting for database to accept connections...")
 	if err := WaitForDatabase(ctx, dockerMgr, containerID, dbState.ContainerName, prov, adminConfig, containerStartTimeout); err != nil {
@@ -100,18 +116,20 @@ func ResetDatabase(ctx context.Context, runtimeMode, name string, onProgress fun
 	}
 
 	if dbState.User != "" {
-		report(fmt.Sprintf("Provisioning user '%s'...", dbState.User))
-		db, err := prov.Connect(adminConfig)
-		if err != nil {
-			CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
-			return nil, fmt.Errorf("connecting to database: %w", err)
-		}
-		if err := prov.CreateUser(ctx, db, dbState.User, dbState.UserPassword, dbState.DatabaseName); err != nil {
+		if sqlProv, ok := providers.AsSQL(prov); ok {
+			report(fmt.Sprintf("Provisioning user '%s'...", dbState.User))
+			db, err := sqlProv.Connect(adminConfig)
+			if err != nil {
+				CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
+				return nil, fmt.Errorf("connecting to database: %w", err)
+			}
+			if err := sqlProv.CreateUser(ctx, db, dbState.User, dbState.UserPassword, dbState.DatabaseName); err != nil {
+				db.Close()
+				CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
+				return nil, fmt.Errorf("creating user: %w", err)
+			}
 			db.Close()
-			CleanupContainer(dockerMgr, ctx, containerID, dbState.ContainerName, dbState.VolumeName)
-			return nil, fmt.Errorf("creating user: %w", err)
 		}
-		db.Close()
 	}
 
 	dbState.ContainerID = containerID

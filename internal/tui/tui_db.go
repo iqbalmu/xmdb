@@ -59,12 +59,16 @@ type sqlQueryResult struct {
 	duration time.Duration
 }
 
-func openDBConn(dbState *state.Database) (providers.Provider, *sql.DB, error) {
+func openDBConn(dbState *state.Database) (providers.SQLProvider, *sql.DB, error) {
 	prov, err := providers.For(dbState.Provider)
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := prov.Connect(&providers.DBConfig{
+	sqlProv, ok := providers.AsSQL(prov)
+	if !ok {
+		return nil, nil, fmt.Errorf("provider '%s' does not support SQL connections", dbState.Provider)
+	}
+	conn, err := sqlProv.Connect(&providers.DBConfig{
 		Host:         "127.0.0.1",
 		Port:         dbState.Port,
 		RootPassword: dbState.RootPassword,
@@ -73,7 +77,7 @@ func openDBConn(dbState *state.Database) (providers.Provider, *sql.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return prov, conn, nil
+	return sqlProv, conn, nil
 }
 
 func fetchTableDetail(ctx context.Context, dbState *state.Database, tableName string) (*tableDetail, error) {

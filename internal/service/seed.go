@@ -68,7 +68,7 @@ func SeedDatabase(ctx context.Context, runtimeMode, dbName, seedPath string, onP
 		if onProgress != nil {
 			onProgress(fmt.Sprintf("Seeding (%d/%d) %s...", i+1, len(files), filepath.Base(file)))
 		}
-		if _, _, _, err := RestoreDatabase(ctx, runtimeMode, dbName, file, io.Discard); err != nil {
+		if _, _, _, err := RestoreDatabaseWithOptions(ctx, runtimeMode, dbName, file, RestoreOptions{NoSnapshot: true}, io.Discard); err != nil {
 			return i, fmt.Errorf("seeding %s: %w", filepath.Base(file), err)
 		}
 	}

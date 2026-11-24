@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	clonePort       int
-	cloneGroup      string
-	cloneVersion    string
-	cloneWithVolume bool
+	clonePort         int
+	cloneGroup        string
+	cloneVersion      string
+	cloneWithVolume   bool
+	cloneFromSnapshot string
 )
 
 var cloneCmd = &cobra.Command{
@@ -33,6 +34,7 @@ func init() {
 	cloneCmd.Flags().StringVarP(&cloneGroup, "group", "g", "", "Group for cloned database (default: inherit from source)")
 	cloneCmd.Flags().StringVarP(&cloneVersion, "version", "v", "", "Database version override (default: inherit from source)")
 	cloneCmd.Flags().BoolVar(&cloneWithVolume, "volume", true, "Create with persistent volume (default: true)")
+	cloneCmd.Flags().StringVar(&cloneFromSnapshot, "from-snapshot", "", "Clone from a saved snapshot name or ID instead of live data")
 }
 
 type cloneOptions = service.CloneOptions
@@ -48,13 +50,14 @@ func runClone(cmd *cobra.Command, sourceName, targetName string) error {
 	}
 
 	opts := cloneOptions{
-		SourceName: sourceName,
-		TargetName: targetName,
-		Port:       clonePort,
-		Group:      strings.TrimSpace(cloneGroup),
-		GroupSet:   cmd.Flags().Changed("group"),
-		Version:    strings.TrimSpace(cloneVersion),
-		WithVolume: cloneWithVolume,
+		SourceName:   sourceName,
+		TargetName:   targetName,
+		Port:         clonePort,
+		Group:        strings.TrimSpace(cloneGroup),
+		GroupSet:     cmd.Flags().Changed("group"),
+		Version:      strings.TrimSpace(cloneVersion),
+		WithVolume:   cloneWithVolume,
+		FromSnapshot: strings.TrimSpace(cloneFromSnapshot),
 	}
 
 	color.Cyan("\nCloning database '%s' -> '%s'...\n", sourceName, targetName)

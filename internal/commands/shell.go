@@ -6,8 +6,8 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/iqbalmu/xmdb/internal/container"
+	"github.com/iqbalmu/xmdb/internal/providers"
 	"github.com/iqbalmu/xmdb/internal/state"
-	"github.com/iqbalmu/xmdb/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -43,12 +43,17 @@ func runShell(name string) error {
 		return fmt.Errorf("database '%s' is not running (start it with: xmdb start %s)", name, name)
 	}
 
-	var cmd []string
-	if dbState.Provider == utils.ProviderMySQL {
-		cmd = []string{"mysql", "-uroot", "-p" + dbState.RootPassword, dbState.DatabaseName}
-	} else {
-		cmd = []string{"psql", "-U", "postgres", "-d", dbState.DatabaseName}
+	prov, err := providers.For(dbState.Provider)
+	if err != nil {
+		return err
 	}
+
+	cmd := prov.ShellCommand(&providers.DBConfig{
+		Host:         "127.0.0.1",
+		Port:         dbState.Port,
+		RootPassword: dbState.RootPassword,
+		DatabaseName: dbState.DatabaseName,
+	})
 
 	color.Cyan("Opening %s shell for '%s' (type \\q or exit to quit)...\n", dbState.Provider, name)
 	return dockerMgr.ExecInteractive(ctx, dbState.ContainerID, dbState.ContainerName, cmd)

@@ -133,3 +133,51 @@ func TestPostgresGetConnectionString(t *testing.T) {
 		t.Errorf("postgres conn string not URL-escaped: %q", got)
 	}
 }
+
+func TestProviderCapabilitiesAndCommands(t *testing.T) {
+	cfg := &DBConfig{
+		Host:         "localhost",
+		Port:         5432,
+		RootPassword: "secret",
+		DatabaseName: "appdb",
+		User:         "dev_user",
+		UserPassword: "devpw",
+	}
+
+	for _, name := range []string{"mysql", "postgres"} {
+		prov, err := For(name)
+		if err != nil {
+			t.Fatalf("For(%q) failed: %v", name, err)
+		}
+		if prov.Name() != name {
+			t.Errorf("Name() = %q, want %q", prov.Name(), name)
+		}
+		if prov.Kind() != EngineSQL {
+			t.Errorf("%s Kind() = %q, want %q", name, prov.Kind(), EngineSQL)
+		}
+		if _, ok := AsSQL(prov); !ok {
+			t.Errorf("%s should implement SQLProvider", name)
+		}
+		snapProv, ok := AsSnapshot(prov)
+		if !ok {
+			t.Fatalf("%s should implement SnapshotProvider", name)
+		}
+		if img := prov.ResolveImage("16", "", "custom/repo:1.0"); img != "custom/repo:1.0" {
+			t.Errorf("%s ResolveImage custom = %q, want custom/repo:1.0", name, img)
+		}
+		if len(prov.ShellCommand(cfg)) == 0 {
+			t.Errorf("%s ShellCommand returned empty", name)
+		}
+		envMap := prov.GetEnvMap(cfg)
+		if envMap["DATABASE_URL"] == "" || envMap["DB_HOST"] != "localhost" || envMap["DB_NAME"] != "appdb" {
+			t.Errorf("%s unexpected GetEnvMap: %+v", name, envMap)
+		}
+		dumpCmd, format := snapProv.SnapshotDumpCommand(cfg)
+		if len(dumpCmd) == 0 || format == "" {
+			t.Errorf("%s SnapshotDumpCommand invalid: %v, %q", name, dumpCmd, format)
+		}
+		if len(snapProv.SnapshotRestoreCommand(cfg, format)) == 0 {
+			t.Errorf("%s SnapshotRestoreCommand returned empty", name)
+		}
+	}
+}

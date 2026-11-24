@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -18,15 +19,47 @@ const (
 	connectTimeoutSeconds = 5
 )
 
+// EngineKind classifies the data model of a database provider so CLI and TUI
+// views can adapt cleanly across SQL, key-value, and document engines.
+type EngineKind string
+
+const (
+	EngineSQL      EngineKind = "sql"
+	EngineKV       EngineKind = "kv"
+	EngineDocument EngineKind = "document"
+)
+
+// SnapshotFormat identifies how a logical snapshot payload is encoded.
+const (
+	SnapshotFormatSQLGzip = "sql.gz"
+	SnapshotFormatPGDump  = "pgdump"
+)
+
+// Provider is the core lifecycle contract shared by every database engine.
 type Provider interface {
+	Name() string
+	Kind() EngineKind
 	GetImageName(version string) string
+	ResolveImage(version, preset, customImage string) string
+	GetDefaultVersion() string
 	GetDefaultPort() int
 	GetContainerPort() string
 	GetEnvVars(config *DBConfig) []string
+	GetCommand(config *DBConfig) []string
 	GetConnectionString(config *DBConfig) string
+	GetEnvMap(config *DBConfig) map[string]string
 	// GetVolumePath returns the container path a named volume must be
 	// mounted at for the given version.
 	GetVolumePath(version string) string
+	// Ping checks protocol-level readiness against a running instance.
+	Ping(ctx context.Context, cfg *DBConfig) error
+	// ShellCommand returns the argv for an interactive shell inside the container.
+	ShellCommand(cfg *DBConfig) []string
+}
+
+// SQLProvider is implemented by relational engines that expose *sql.DB access.
+type SQLProvider interface {
+	Provider
 	// Connect opens a working sql.DB for the given config. Passwords that are
 	// awkward in a connection string (MySQL ':', '/', '@') are safe here.
 	Connect(cfg *DBConfig) (*sql.DB, error)
@@ -34,9 +67,34 @@ type Provider interface {
 	ListTables(ctx context.Context, db *sql.DB, dbName string) ([]string, error)
 }
 
+// SnapshotProvider is implemented by engines supporting in-container logical
+// backup, restore, snapshot, and streaming clone operations.
+type SnapshotProvider interface {
+	Provider
+	BackupCommand(cfg *DBConfig) []string
+	RestoreCommand(cfg *DBConfig) []string
+	SnapshotDumpCommand(cfg *DBConfig) (cmd []string, format string)
+	SnapshotRestoreCommand(cfg *DBConfig, format string) []string
+	CloneDumpCommand(cfg *DBConfig) []string
+	CloneRestoreCommand(cfg *DBConfig) []string
+}
+
+// AsSQL returns the SQLProvider capability if p supports relational SQL access.
+func AsSQL(p Provider) (SQLProvider, bool) {
+	sp, ok := p.(SQLProvider)
+	return sp, ok
+}
+
+// AsSnapshot returns the SnapshotProvider capability if p supports logical
+// backup, restore, snapshot, and clone operations.
+func AsSnapshot(p Provider) (SnapshotProvider, bool) {
+	sp, ok := p.(SnapshotProvider)
+	return sp, ok
+}
+
 // For returns the provider implementation for a provider name.
 func For(name string) (Provider, error) {
-	switch name {
+	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "mysql":
 		return NewMySQLProvider(), nil
 	case "postgres":

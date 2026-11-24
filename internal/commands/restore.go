@@ -15,7 +15,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var restoreForce bool
+var (
+	restoreForce      bool
+	restoreNoSnapshot bool
+)
 
 var restoreCmd = &cobra.Command{
 	Use:   "restore <name> <backup-file>",
@@ -28,6 +31,7 @@ var restoreCmd = &cobra.Command{
 
 func init() {
 	restoreCmd.Flags().BoolVarP(&restoreForce, "force", "f", false, "Skip confirmation prompt")
+	restoreCmd.Flags().BoolVar(&restoreNoSnapshot, "no-snapshot", false, "Skip automatic safety snapshot before restoring")
 }
 
 func runRestore(name, backupFile string) error {
@@ -97,5 +101,10 @@ func runRestore(name, backupFile string) error {
 }
 
 func restoreDatabase(ctx context.Context, name, backupFile string, stdout io.Writer) (string, int64, string, error) {
-	return service.RestoreDatabase(ctx, runtimeMode, name, backupFile, stdout)
+	return service.RestoreDatabaseWithOptions(ctx, runtimeMode, name, backupFile, service.RestoreOptions{
+		NoSnapshot: restoreNoSnapshot,
+		OnProgress: func(msg string) {
+			color.White("  %s", msg)
+		},
+	}, stdout)
 }
