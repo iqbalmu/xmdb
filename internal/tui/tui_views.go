@@ -133,7 +133,12 @@ func (m *dashboardModel) renderTableDetailToVP() {
 	if m.tableDetail.kind != "" && m.tableDetail.kind != providers.EngineSQL {
 		title := "Key: " + m.tableDetail.tableName
 		if m.tableDetail.kind == providers.EngineDocument {
-			title = "Collection: " + m.tableDetail.tableName + " (sample documents)"
+			pageSize := max(1, m.tableDetail.pageSize)
+			totalPages := max(1, int((m.tableDetail.totalRows+int64(pageSize)-1)/int64(pageSize)))
+			title = fmt.Sprintf("Collection: %s  •  Page %d/%d (%d docs)", m.tableDetail.tableName, m.tableDetail.page+1, totalPages, m.tableDetail.totalRows)
+			if m.tableDetail.filter != "" {
+				title += "  •  filter: " + m.tableDetail.filter
+			}
 		}
 		content := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render(title) + "\n\n" + m.tableDetail.rawText
 		m.tableDetailVP.SetContent(content)
@@ -154,11 +159,38 @@ func (m *dashboardModel) renderTableDetailToVP() {
 		}
 	}
 
-	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Preview (up to 25 rows)") + "\n")
-	if len(m.tableDetail.previewCols) == 0 {
-		b.WriteString(styleMutedText.Render("(unable to preview rows or empty)") + "\n")
+	pageSize := max(1, m.tableDetail.pageSize)
+	totalPages := max(1, int((m.tableDetail.totalRows+int64(pageSize)-1)/int64(pageSize)))
+	previewTitle := fmt.Sprintf("Rows — Page %d/%d (%d total)", m.tableDetail.page+1, totalPages, m.tableDetail.totalRows)
+	if m.tableDetail.sortCol != "" {
+		dir := "ASC"
+		if m.tableDetail.sortDesc {
+			dir = "DESC"
+		}
+		previewTitle += fmt.Sprintf("  •  ORDER BY %s %s", m.tableDetail.sortCol, dir)
+	}
+	if m.tableDetail.filter != "" {
+		previewTitle += fmt.Sprintf("  •  WHERE %s", m.tableDetail.filter)
+	}
+	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render(previewTitle) + "\n")
+	if len(m.tableDetail.previewCols) == 0 || len(m.tableDetail.previewRows) == 0 {
+		b.WriteString(styleMutedText.Render("(no matching rows)") + "\n")
 	} else {
-		b.WriteString(formatCompactTable(m.tableDetail.previewCols, m.tableDetail.previewRows, w))
+		// Prepend row index column with selection arrow so users see which row Enter inspects.
+		dispCols := append([]string{"#"}, m.tableDetail.previewCols...)
+		dispRows := make([][]string, len(m.tableDetail.previewRows))
+		startRow := m.tableDetail.page*pageSize + 1
+		for i, r := range m.tableDetail.previewRows {
+			marker := fmt.Sprintf("%d", startRow+i)
+			if i == m.explorerRowCursor {
+				marker = "▸" + marker
+			}
+			rowCopy := make([]string, 0, len(r)+1)
+			rowCopy = append(rowCopy, marker)
+			rowCopy = append(rowCopy, r...)
+			dispRows[i] = rowCopy
+		}
+		b.WriteString(formatCompactTable(dispCols, dispRows, w))
 	}
 	m.tableDetailVP.SetContent(b.String())
 	m.tableDetailVP.GotoTop()
@@ -256,6 +288,20 @@ func (m dashboardModel) View() string {
 			name = sel.db.Name
 		}
 		return renderOverlay(base, renderExportModal(name, m.exportState, m.width), m.width, m.height)
+	case modalSnapshots:
+		return renderOverlay(base, renderSnapshotsModal(m.snapshotState, m.width), m.width, m.height)
+	case modalDoctor:
+		return renderOverlay(base, renderDoctorModal(m.doctorState, m.width), m.width, m.height)
+	case modalEditDB:
+		return renderOverlay(base, renderEditDBModal(m.editDBState, m.width), m.width, m.height)
+	case modalRowInspect:
+		return renderOverlay(base, renderRowInspectModal(m.rowInspectState, m.width), m.width, m.height)
+	case modalSaveQuery:
+		return renderOverlay(base, renderSaveQueryModal(m.saveQueryState, m.width), m.width, m.height)
+	case modalSnippets:
+		return renderOverlay(base, renderSnippetsModal(m.snippetsState, m.width), m.width, m.height)
+	case modalPalette:
+		return renderOverlay(base, renderPaletteModal(m.paletteState, m.width), m.width, m.height)
 	}
 	return base
 }
@@ -434,6 +480,9 @@ func (m dashboardModel) renderInfoTab(e *dbEntry) string {
 	}
 	b.WriteString("\n" + styleLabel.Render("Conn String:") + "\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(colorSuccess).Render(e.connStr) + "\n")
+	if e.running {
+		b.WriteString("\n" + renderLiveMetricsCard(m.metrics[db.Name]))
+	}
 	return b.String()
 }
 
@@ -463,7 +512,14 @@ func (m dashboardModel) renderTablesTab() string {
 	if kind != providers.EngineSQL {
 		var b strings.Builder
 		if m.selectedTable != "" {
-			b.WriteString(styleMutedText.Render("Esc: back  •  ↑/↓: scroll  •  Q: run in Console/Query") + "\n")
+			status := "Esc: back  •  ↑/↓: scroll  •  Q: query"
+			if kind == providers.EngineDocument {
+				status = "Esc: back  •  ,/.: page  •  W: JSON filter  •  Q: query"
+			}
+			b.WriteString(styleMutedText.Render(status) + "\n")
+			if m.explorerFiltering {
+				b.WriteString("Filter: " + m.explorerFilterInput.View() + "\n")
+			}
 			if m.tableDetail == nil {
 				b.WriteString(styleMutedText.Render("Loading details..."))
 			} else {
@@ -499,8 +555,11 @@ func (m dashboardModel) renderTablesTab() string {
 
 	if m.selectedTable != "" {
 		var b strings.Builder
-		status := fmt.Sprintf("%s  %s  •  Esc: back  •  v: view  •  f: fields  •  ↑/↓: scroll", viewBadge, fieldsBadge)
+		status := fmt.Sprintf("%s  %s  •  Enter: inspect row  •  ,/.: page  •  W: filter  •  o: sort  •  Esc: back", viewBadge, fieldsBadge)
 		b.WriteString(styleMutedText.Render(status) + "\n")
+		if m.explorerFiltering {
+			b.WriteString("WHERE: " + m.explorerFilterInput.View() + "\n")
+		}
 		if m.tableDetail == nil {
 			b.WriteString(styleMutedText.Render("Loading table details..."))
 		} else {
@@ -555,17 +614,26 @@ func (m dashboardModel) renderTablesTab() string {
 
 func (m dashboardModel) renderQueryTab() string {
 	var b strings.Builder
-	hint := "Press 'i' or Enter to write SQL"
+	kind := m.selectedEngineKind()
+	hint := "i/Enter: write query  •  Ctrl+S: save  •  Ctrl+O: snippets"
+	if kind == providers.EngineSQL {
+		hint += "  •  E: EXPLAIN"
+	}
 	if m.queryResult != nil && m.queryResult.isSelect {
-		hint += "  •  e: export CSV/JSON  •  c: copy JSON"
+		hint += "  •  e: export  •  c: copy JSON"
 		if m.queryTotalW > max(24, m.queryVP.Width) {
 			hint += "  •  </>: h-scroll"
 		}
 	}
 	if m.queryInput.Focused() {
-		hint = "Ctrl+R / F5: execute SQL  •  Enter: newline  •  Ctrl+P/N (or ↑/↓): history  •  Esc: blur"
+		hint = "Ctrl+R / F5: execute  •  Ctrl+S: save snippet  •  Ctrl+O: snippets  •  ↑/↓: history  •  Esc: blur"
+		b.WriteString(m.queryInput.View() + "\n")
+	} else if kind == providers.EngineSQL && strings.TrimSpace(m.queryInput.Value()) != "" {
+		// Show syntax-highlighted preview box when editor is blurred
+		b.WriteString(lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(colorSubtle).Padding(0, 1).Render(highlightSQL(m.queryInput.Value())) + "\n")
+	} else {
+		b.WriteString(m.queryInput.View() + "\n")
 	}
-	b.WriteString(m.queryInput.View() + "\n")
 	b.WriteString(styleMutedText.Render(hint) + "\n\n")
 	if m.queryResult == nil && m.queryErr == nil {
 		b.WriteString(styleMutedText.Render("Results will appear here."))
@@ -608,26 +676,26 @@ func (m dashboardModel) renderFooter() string {
 
 func (m dashboardModel) footerHelpText() string {
 	if m.focusPane == 0 {
-		return "  [Sidebar] ↑/↓: nav  •  →/Enter: pane  •  /: filter  •  s: start/stop  •  n: new  •  C: clone  •  x: shell  •  b/L: backup/restore  •  R/d: reset/del  •  ?: help  •  q: quit"
+		return "  [Sidebar] ↑/↓: nav  •  s: start/stop  •  n: new  •  S: snap  •  E: edit  •  D: doctor  •  C: clone  •  x: shell  •  Ctrl+P: palette  •  ?: help  •  q: quit"
 	}
 
 	switch m.activeTab {
 	case 0:
-		return "  [Info] c: copy conn  •  p: password  •  ←/Esc: sidebar  •  1-4/Tab: tab  •  r: refresh  •  ?: help  •  q: quit"
+		return "  [Info] c: copy conn  •  p: password  •  S: snapshots  •  E: edit  •  D: doctor  •  Ctrl+P: palette  •  1-4/Tab: tab  •  ?: help"
 	case 1:
-		return "  [Logs] ↑/↓: scroll  •  f: follow  •  /: search  •  n/N: match  •  ←/Esc: sidebar  •  1-4/Tab: tab  •  ?: help  •  q: quit"
+		return "  [Logs] ↑/↓: scroll  •  f: follow  •  /: search  •  n/N: match  •  Ctrl+P: palette  •  1-4/Tab: tab  •  ?: help"
 	case 2:
 		if m.selectedTable != "" {
-			return "  [Table Detail] ↑/↓: scroll  •  Q: query  •  v: view  •  f: fields  •  Esc: back  •  1-4/Tab: tab  •  ?: help  •  q: quit"
+			return "  [Table Detail] ↑/↓: row  •  Enter: inspect row  •  ,/.: page  •  W: filter  •  o: sort  •  Q: query  •  Esc: back  •  ?: help"
 		}
-		if m.tableViewDiagram {
-			return "  [Tables ERD] ↑/↓: select  •  +/-: zoom  •  Shift+Arrows: pan  •  Enter: inspect  •  Q: query  •  v: view  •  f: fields  •  ?: help  •  q: quit"
+		if m.tableViewDiagram && m.selectedEngineKind() == providers.EngineSQL {
+			return "  [Tables ERD] ↑/↓: select  •  +/-: zoom  •  Shift+Arrows: pan  •  Enter: explore  •  Q: query  •  v: view  •  ?: help"
 		}
-		return "  [Tables] ↑/↓: select  •  /: filter  •  Enter: inspect  •  Q: query  •  v: view  •  f: fields  •  ←/Esc: sidebar  •  ?: help  •  q: quit"
+		return "  [Tables] ↑/↓: select  •  /: filter  •  Enter: explore  •  Q: query  •  Ctrl+P: palette  •  ←/Esc: sidebar  •  ?: help"
 	case 3:
-		return "  [Query] i/Enter: write SQL  •  Shift+←/→: h-scroll  •  e: export  •  c: copy JSON  •  ↑/↓: scroll  •  ?: help  •  q: quit"
+		return "  [Query] i/Enter: edit  •  Ctrl+S: save  •  Ctrl+O: snippets  •  E: EXPLAIN  •  e: export  •  c: copy  •  Ctrl+P: palette  •  ?: help"
 	default:
-		return "  ←/Esc: sidebar  •  1-4/Tab: tab  •  ?: help  •  q: quit"
+		return "  ←/Esc: sidebar  •  1-4/Tab: tab  •  Ctrl+P: palette  •  ?: help  •  q: quit"
 	}
 }
 

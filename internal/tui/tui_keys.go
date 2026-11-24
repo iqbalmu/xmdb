@@ -108,6 +108,31 @@ func (m dashboardModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Right-pane Data Explorer filter input (WHERE / Mongo JSON filter)
+	if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable != "" && m.explorerFiltering {
+		switch msg.String() {
+		case "esc":
+			m.explorerFiltering = false
+			m.explorerFilterInput.Blur()
+			m.explorerFilterInput.SetValue(m.explorerOpts.Filter)
+			return m, nil
+		case "enter":
+			m.explorerFiltering = false
+			m.explorerFilterInput.Blur()
+			m.explorerOpts.Filter = strings.TrimSpace(m.explorerFilterInput.Value())
+			m.explorerOpts.Page = 0
+			m.explorerRowCursor = 0
+			if sel := m.selected(); sel != nil && sel.running {
+				m.busy = fmt.Sprintf("Filtering '%s'...", m.selectedTable)
+				return m, tea.Batch(m.spinner.Tick, loadTableDetailWithOptsCmd(m.runtimeMode, sel.db, m.selectedTable, m.explorerOpts))
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.explorerFilterInput, cmd = m.explorerFilterInput.Update(msg)
+		return m, cmd
+	}
+
 	// Right-pane Query input focused
 	if m.focusPane == 1 && m.activeTab == 3 && m.queryInput.Focused() {
 		prevHistory := func() {
@@ -138,6 +163,23 @@ func (m dashboardModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc":
 			m.queryInput.Blur()
+			return m, nil
+		case "ctrl+s":
+			if strings.TrimSpace(m.queryInput.Value()) == "" {
+				return m, m.setToast("Write a query before saving", true)
+			}
+			m.saveQueryState = newSaveQueryModalState()
+			m.modal = modalSaveQuery
+			return m, textinput.Blink
+		case "ctrl+o":
+			provName := ""
+			if sel := m.selected(); sel != nil {
+				provName = sel.db.Provider
+			}
+			m.snippetsState = snippetsModalState{
+				items: filterSavedQueries(m.savedQueries, provName, ""),
+			}
+			m.modal = modalSnippets
 			return m, nil
 		case "ctrl+p", "alt+up":
 			prevHistory()
@@ -185,6 +227,136 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
+	case "ctrl+p":
+		m.paletteState = newPaletteModalState()
+		m.modal = modalPalette
+		return m, textinput.Blink
+
+	case "S":
+		if sel := m.selected(); sel != nil && m.busy == "" {
+			m.snapshotState = newSnapshotModalState(sel.db.Name)
+			m.modal = modalSnapshots
+			return m, loadSnapshotsCmd(sel.db.Name)
+		}
+
+	case "D":
+		if m.busy == "" {
+			m.doctorState = doctorModalState{loading: true}
+			m.modal = modalDoctor
+			return m, runDoctorCmd(m.runtimeMode)
+		}
+
+	case "E":
+		if m.focusPane == 1 && m.activeTab == 3 && m.busy == "" {
+			sel := m.selected()
+			if sel == nil || !sel.running {
+				return m, m.setToast("Database must be running to run EXPLAIN", true)
+			}
+			eq, err := buildExplainQuery(sel.db.Provider, m.queryInput.Value())
+			if err != nil {
+				return m, m.setToast(err.Error(), true)
+			}
+			m.busy = "Running EXPLAIN..."
+			return m, tea.Batch(m.spinner.Tick, runQuickSQLCmd(m.runtimeMode, sel.db, eq))
+		}
+		if (m.focusPane == 0 || m.activeTab == 0) && m.busy == "" {
+			if sel := m.selected(); sel != nil {
+				m.editDBState = newEditDBModalState(sel.db)
+				m.modal = modalEditDB
+				return m, textinput.Blink
+			}
+		}
+
+	case "ctrl+s":
+		if m.focusPane == 1 && m.activeTab == 3 {
+			if strings.TrimSpace(m.queryInput.Value()) == "" {
+				return m, m.setToast("Write a query before saving", true)
+			}
+			m.saveQueryState = newSaveQueryModalState()
+			m.modal = modalSaveQuery
+			return m, textinput.Blink
+		}
+
+	case "ctrl+o", "O":
+		if m.focusPane == 1 && m.activeTab == 3 {
+			provName := ""
+			if sel := m.selected(); sel != nil {
+				provName = sel.db.Provider
+			}
+			m.snippetsState = snippetsModalState{
+				items: filterSavedQueries(m.savedQueries, provName, ""),
+			}
+			m.modal = modalSnippets
+			return m, nil
+		}
+
+	case "W":
+		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable != "" {
+			m.explorerFiltering = true
+			m.explorerFilterInput.SetValue(m.explorerOpts.Filter)
+			m.explorerFilterInput.Focus()
+			return m, textinput.Blink
+		}
+
+	case "o":
+		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable != "" && m.tableDetail != nil && len(m.tableDetail.previewCols) > 0 {
+			cols := m.tableDetail.previewCols
+			if m.explorerOpts.SortCol == "" {
+				m.explorerOpts.SortCol = cols[0]
+				m.explorerOpts.SortDesc = false
+			} else if !m.explorerOpts.SortDesc {
+				m.explorerOpts.SortDesc = true
+			} else {
+				idx := -1
+				for i, c := range cols {
+					if c == m.explorerOpts.SortCol {
+						idx = i
+						break
+					}
+				}
+				if idx >= 0 && idx+1 < len(cols) {
+					m.explorerOpts.SortCol = cols[idx+1]
+					m.explorerOpts.SortDesc = false
+				} else {
+					m.explorerOpts.SortCol = ""
+					m.explorerOpts.SortDesc = false
+				}
+			}
+			m.explorerOpts.Page = 0
+			m.explorerRowCursor = 0
+			if sel := m.selected(); sel != nil && sel.running {
+				m.busy = fmt.Sprintf("Sorting '%s'...", m.selectedTable)
+				return m, tea.Batch(m.spinner.Tick, loadTableDetailWithOptsCmd(m.runtimeMode, sel.db, m.selectedTable, m.explorerOpts))
+			}
+			return m, nil
+		}
+
+	case ",":
+		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable != "" && m.explorerOpts.Page > 0 {
+			m.explorerOpts.Page--
+			m.explorerRowCursor = 0
+			if sel := m.selected(); sel != nil && sel.running {
+				m.busy = fmt.Sprintf("Loading page %d...", m.explorerOpts.Page+1)
+				return m, tea.Batch(m.spinner.Tick, loadTableDetailWithOptsCmd(m.runtimeMode, sel.db, m.selectedTable, m.explorerOpts))
+			}
+			return m, nil
+		}
+
+	case ".":
+		if m.focusPane == 1 && m.activeTab == 2 && m.selectedTable != "" && m.tableDetail != nil {
+			pageSize := max(1, m.tableDetail.pageSize)
+			totalPages := max(1, int((m.tableDetail.totalRows+int64(pageSize)-1)/int64(pageSize)))
+			if m.explorerOpts.Page+1 < totalPages {
+				m.explorerOpts.Page++
+				m.explorerRowCursor = 0
+				if sel := m.selected(); sel != nil && sel.running {
+					m.busy = fmt.Sprintf("Loading page %d...", m.explorerOpts.Page+1)
+					return m, tea.Batch(m.spinner.Tick, loadTableDetailWithOptsCmd(m.runtimeMode, sel.db, m.selectedTable, m.explorerOpts))
+				}
+			}
+			return m, nil
+		}
+
 	case "?":
 		m.modal = modalHelp
 		return m, nil
@@ -206,18 +378,27 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab", "]":
 		if m.focusPane == 1 {
 			m.activeTab = (m.activeTab + 1) % tabCount
+			if m.activeTab == 0 {
+				return m, loadMetricsCmd(m.runtimeMode, m.selected())
+			}
 			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
 	case "shift+tab", "[":
 		if m.focusPane == 1 {
 			m.activeTab = (m.activeTab + tabCount - 1) % tabCount
+			if m.activeTab == 0 {
+				return m, loadMetricsCmd(m.runtimeMode, m.selected())
+			}
 			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
 	case "1", "2", "3", "4":
 		if m.focusPane == 1 {
 			m.activeTab = int(msg.String()[0] - '1')
+			if m.activeTab == 0 {
+				return m, loadMetricsCmd(m.runtimeMode, m.selected())
+			}
 			return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 		}
 
@@ -281,9 +462,19 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor--
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
+				if m.activeTab == 0 {
+					return m, loadMetricsCmd(m.runtimeMode, m.selected())
+				}
 				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 		} else {
+			if m.activeTab == 2 && m.selectedTable != "" && m.tableDetail != nil && len(m.tableDetail.previewRows) > 0 {
+				if m.explorerRowCursor > 0 {
+					m.explorerRowCursor--
+					m.renderTableDetailToVP()
+					return m, nil
+				}
+			}
 			return m.scrollRight(-1)
 		}
 
@@ -293,9 +484,19 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cursor++
 				m.ensureLeftVisible()
 				m.resetRightSubstate()
+				if m.activeTab == 0 {
+					return m, loadMetricsCmd(m.runtimeMode, m.selected())
+				}
 				return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
 			}
 		} else {
+			if m.activeTab == 2 && m.selectedTable != "" && m.tableDetail != nil && len(m.tableDetail.previewRows) > 0 {
+				if m.explorerRowCursor < len(m.tableDetail.previewRows)-1 {
+					m.explorerRowCursor++
+					m.renderTableDetailToVP()
+					return m, nil
+				}
+			}
 			return m.scrollRight(1)
 		}
 
@@ -388,14 +589,24 @@ func (m dashboardModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		} else if m.activeTab == 2 {
+			if m.selectedTable != "" && msg.String() == "enter" && m.tableDetail != nil && len(m.tableDetail.previewRows) > 0 {
+				idx := min(max(0, m.explorerRowCursor), len(m.tableDetail.previewRows)-1)
+				rowNum := m.tableDetail.page*max(1, m.tableDetail.pageSize) + idx + 1
+				title := fmt.Sprintf("Row #%d — %s", rowNum, m.selectedTable)
+				m.rowInspectState = newRowInspectModalState(title, m.tableDetail.previewCols, m.tableDetail.previewRows[idx], m.width, m.height)
+				m.modal = modalRowInspect
+				return m, nil
+			}
 			vis := m.visibleTables()
 			if m.selectedTable == "" && len(vis) > 0 && m.tableCursor < len(vis) {
 				sel := m.selected()
 				if sel != nil && sel.running {
 					tName := vis[m.tableCursor]
 					m.selectedTable = tName
+					m.explorerOpts = tableExplorerOpts{PageSize: defaultExplorerPageSize}
+					m.explorerRowCursor = 0
 					m.busy = fmt.Sprintf("Inspecting '%s'...", tName)
-					return m, tea.Batch(m.spinner.Tick, loadTableDetailCmd(m.runtimeMode, sel.db, tName))
+					return m, tea.Batch(m.spinner.Tick, loadTableDetailWithOptsCmd(m.runtimeMode, sel.db, tName, m.explorerOpts))
 				}
 			}
 		} else if m.activeTab == 3 && msg.String() == "enter" {

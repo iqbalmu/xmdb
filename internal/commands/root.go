@@ -20,7 +20,7 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Long: `xmdb is a powerful CLI tool for managing development databases.
-It supports MySQL and PostgreSQL with easy container management.`,
+It supports PostgreSQL, MySQL, MariaDB, Redis, Valkey, and MongoDB with easy container management.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runWizard()
 	},

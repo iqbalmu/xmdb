@@ -1,0 +1,32 @@
+# Example multi-DB xmdb project manifest (PostgreSQL + pgvector + Redis)
+# Usage:
+#   xmdb up -f examples/xmdb.yaml --sync-env
+#   xmdb run -f examples/xmdb.yaml -- env
+#   xmdb down -f examples/xmdb.yaml --remove
+version: 1
+project: ecommerce
+env_file: .env
+
+databases:
+  db:
+    provider: postgres
+    version: "16"
+    preset: pgvector
+    port: 5432
+    seed: ./seed/ecommerce
+    env:
+      DATABASE_URL: "{{url}}"
+      DB_HOST: "{{host}}"
+      DB_PORT: "{{port}}"
+      DB_USER: "{{user}}"
+      DB_PASSWORD: "{{password}}"
+      DB_NAME: "{{database}}"
+
+  cache:
+    provider: redis
+    version: "7.4"
+    port: 6379
+    env:
+      REDIS_URL: "{{url}}"
+      REDIS_PORT: "{{port}}"
+      REDIS_PASSWORD: "{{password}}"

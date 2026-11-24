@@ -25,6 +25,13 @@ const (
 	modalCreate
 	modalClone
 	modalExport
+	modalSnapshots
+	modalDoctor
+	modalEditDB
+	modalRowInspect
+	modalSaveQuery
+	modalSnippets
+	modalPalette
 )
 
 type exportModalState struct {
@@ -151,26 +158,30 @@ func renderHelpModal(width int) string {
 			title: "Database & Group Actions",
 			items: [][2]string{
 				{"s", "Start/stop selected database (or entire group)"},
-				{"n", "Create new database"},
+				{"n", "Create new database (Postgres/MySQL/MariaDB/Redis/Valkey/Mongo)"},
+				{"S", "Open Snapshots modal (create, rollback, delete, clone)"},
+				{"E", "Edit database (rename / move group) or EXPLAIN (Query tab)"},
+				{"D", "Open Doctor diagnostics & quick-fix overlay"},
 				{"C", "Clone selected database"},
-				{"x", "Open interactive SQL shell"},
-				{"b / L", "Backup to SQL file / Restore from SQL file"},
+				{"x", "Open interactive shell"},
+				{"b / L", "Backup / Restore database"},
 				{"c / p", "Copy connection string / Toggle password"},
 				{"R / d", "Reset (wipe data) / Remove database"},
+				{"Ctrl+P", "Open Command Palette"},
 			},
 		},
 		{
-			title: "Logs, Tables & Query",
+			title: "Data Explorer, Logs & Query",
 			items: [][2]string{
-				{"f", "Toggle log auto-follow (Logs) / table fields (Tables)"},
-				{"v", "Toggle table view: list/table vs diagram (Tables tab)"},
-				{"/", "Filter tables (Tables list) or search logs (Logs)"},
-				{"Q", "Query selected table (Tables -> Query tab)"},
-				{"n / N", "Next / previous log search match"},
-				{"Esc", "Back to table list / exit search / clear filter"},
-				{"i / Enter", "Focus SQL editor (Query tab; Ctrl+R/F5 run, Ctrl+P/N history)"},
-				{"Shift+←/→, </>", "Horizontal scroll wide query results (0 to reset)"},
-				{"e / c", "Export CSV/JSON or copy JSON result (Query tab)"},
+				{"f / v", "Toggle log follow / table fields / diagram vs list"},
+				{", / .", "Previous / Next page in Data Explorer"},
+				{"W / o", "Filter (WHERE/JSON) / Cycle sort column in Data Explorer"},
+				{"Enter (Row)", "Open Row / JSON Inspector modal (c to copy JSON)"},
+				{"Q", "Query selected table/key/collection in Query tab"},
+				{"i / Enter", "Focus Query/Console editor (Ctrl+R/F5 run, ↑/↓ history)"},
+				{"Ctrl+S / Ctrl+O", "Save query snippet / Open saved snippets picker"},
+				{"E (Query tab)", "Run EXPLAIN / EXPLAIN ANALYZE on active SQL query"},
+				{"e / c", "Export CSV/JSON or copy result (Query tab)"},
 				{"r / ? / q", "Refresh / Toggle help / Quit"},
 			},
 		},
@@ -289,6 +300,9 @@ func renderRestoreModal(dbName string, st restoreModalState, width int) string {
 }
 
 func (m dashboardModel) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal >= modalSnapshots {
+		return m.updatePowerModalKey(msg)
+	}
 	switch m.modal {
 	case modalHelp:
 		if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" || msg.String() == "enter" {

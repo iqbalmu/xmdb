@@ -133,30 +133,37 @@ type dashboardModel struct {
 	logMatchLines   []int
 	logMatchCurrent int
 
-	// Tables / Keys / Collections tab
-	detailTables      []string
-	tableSchema       *tableSchemaGraph
-	kvKeys            []providers.KVKeyInfo
-	docCollections    []docCollectionInfo
-	tableCursor       int
-	selectedTable     string
-	tableDetail       *tableDetail
-	tableOverviewVP   viewport.Model
-	tableDetailVP     viewport.Model
-	tableViewDiagram  bool
-	tableShowFields   bool
-	tableFiltering    bool
-	tableFilterInput  textinput.Model
-	erdXOffset        int
-	erdYOffset        int
-	erdZoom           int // 0=50% (out), 1=100% (normal), 2=150% (in)
-	erdLayout         *erdLayoutResult
-	erdDragging       bool
-	erdDragLastX      int
-	erdDragLastY      int
-	erdDragMoved      bool
-	lastERDClickTable string
-	lastERDClickAt    time.Time
+	// Metrics cache (keyed by database name)
+	metrics map[string]*dbMetrics
+
+	// Tables / Keys / Collections tab & Data Explorer
+	detailTables        []string
+	tableSchema         *tableSchemaGraph
+	kvKeys              []providers.KVKeyInfo
+	docCollections      []docCollectionInfo
+	tableCursor         int
+	selectedTable       string
+	tableDetail         *tableDetail
+	tableOverviewVP     viewport.Model
+	tableDetailVP       viewport.Model
+	tableViewDiagram    bool
+	tableShowFields     bool
+	tableFiltering      bool
+	tableFilterInput    textinput.Model
+	explorerOpts        tableExplorerOpts
+	explorerRowCursor   int
+	explorerFiltering   bool
+	explorerFilterInput textinput.Model
+	erdXOffset          int
+	erdYOffset          int
+	erdZoom             int // 0=50% (out), 1=100% (normal), 2=150% (in)
+	erdLayout           *erdLayoutResult
+	erdDragging         bool
+	erdDragLastX        int
+	erdDragLastY        int
+	erdDragMoved        bool
+	lastERDClickTable   string
+	lastERDClickAt      time.Time
 
 	// Query tab
 	queryInput   textarea.Model
@@ -168,19 +175,27 @@ type dashboardModel struct {
 	queryDraft   string
 	queryXOffset int
 	queryTotalW  int
+	savedQueries []SavedQuery
 
 	// Filter
 	filtering   bool
 	filterInput textinput.Model
 
 	// Modals & confirmations
-	confirmMode  string // "", "remove", "reset"
-	modal        modalKind
-	backupInput  textinput.Model
-	restoreState restoreModalState
-	createWizard *createModel
-	cloneState   cloneModalState
-	exportState  exportModalState
+	confirmMode     string // "", "remove", "reset"
+	modal           modalKind
+	backupInput     textinput.Model
+	restoreState    restoreModalState
+	createWizard    *createModel
+	cloneState      cloneModalState
+	exportState     exportModalState
+	snapshotState   snapshotModalState
+	doctorState     doctorModalState
+	editDBState     editDBModalState
+	rowInspectState rowInspectModalState
+	saveQueryState  saveQueryModalState
+	snippetsState   snippetsModalState
+	paletteState    paletteModalState
 
 	// Status & feedback
 	spinner    spinner.Model
@@ -214,30 +229,39 @@ func newDashboardModel() dashboardModel {
 	tfi.CharLimit = 64
 	tfi.Width = 28
 
+	efi := textinput.New()
+	efi.Placeholder = "WHERE clause (e.g. status = 'active') or Mongo JSON filter"
+	efi.CharLimit = 256
+	efi.Width = 44
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colorWarning)
 
 	return dashboardModel{
-		width:            100,
-		height:           30,
-		collapsedGroups:  make(map[string]bool),
-		filterInput:      fi,
-		logSearchInput:   lsi,
-		tableFilterInput: tfi,
-		queryInput:       qi,
-		queryHistory:     loadQueryHistory(),
-		queryHistIdx:     -1,
-		logsVP:           viewport.New(50, 18),
-		tableOverviewVP:  viewport.New(50, 18),
-		tableDetailVP:    viewport.New(50, 18),
-		tableViewDiagram: true,
-		tableShowFields:  true,
-		erdZoom:          1,
-		queryVP:          viewport.New(50, 14),
-		logFollow:        true,
-		spinner:          sp,
-		busy:             "Loading databases...",
+		width:               100,
+		height:              30,
+		collapsedGroups:     make(map[string]bool),
+		metrics:             make(map[string]*dbMetrics),
+		filterInput:         fi,
+		logSearchInput:      lsi,
+		tableFilterInput:    tfi,
+		explorerFilterInput: efi,
+		explorerOpts:        tableExplorerOpts{PageSize: defaultExplorerPageSize},
+		queryInput:          qi,
+		queryHistory:        loadQueryHistory(),
+		savedQueries:        loadSavedQueries(),
+		queryHistIdx:        -1,
+		logsVP:              viewport.New(50, 18),
+		tableOverviewVP:     viewport.New(50, 18),
+		tableDetailVP:       viewport.New(50, 18),
+		tableViewDiagram:    true,
+		tableShowFields:     true,
+		erdZoom:             1,
+		queryVP:             viewport.New(50, 14),
+		logFollow:           true,
+		spinner:             sp,
+		busy:                "Loading databases...",
 	}
 }
 
@@ -414,6 +438,11 @@ func (m *dashboardModel) resetRightSubstate() {
 	m.tableFiltering = false
 	m.tableFilterInput.Blur()
 	m.tableFilterInput.SetValue("")
+	m.explorerOpts = tableExplorerOpts{PageSize: defaultExplorerPageSize}
+	m.explorerRowCursor = 0
+	m.explorerFiltering = false
+	m.explorerFilterInput.Blur()
+	m.explorerFilterInput.SetValue("")
 	m.erdXOffset = 0
 	m.erdYOffset = 0
 	m.erdLayout = nil
@@ -469,7 +498,43 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.entries = msg.entries
 		m.applyFilter()
 		m.syncQueryPrompt()
-		return m, loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)
+		cmds := []tea.Cmd{loadDetailCmd(m.runtimeMode, m.selected(), m.activeTab)}
+		if m.activeTab == 0 {
+			cmds = append(cmds, loadMetricsCmd(m.runtimeMode, m.selected()))
+		}
+		return m, tea.Batch(cmds...)
+
+	case msgMetricsLoaded:
+		if msg.metrics != nil {
+			if m.metrics == nil {
+				m.metrics = make(map[string]*dbMetrics)
+			}
+			m.metrics[msg.name] = msg.metrics
+		}
+		return m, nil
+
+	case msgSnapshotsLoaded:
+		if m.modal == modalSnapshots && m.snapshotState.dbName == msg.dbName {
+			m.snapshotState.loading = false
+			m.snapshotState.snaps = msg.snaps
+			if msg.err != nil {
+				m.snapshotState.errMsg = msg.err.Error()
+			}
+			if m.snapshotState.cursor >= len(msg.snaps) {
+				m.snapshotState.cursor = max(0, len(msg.snaps)-1)
+			}
+		}
+		return m, nil
+
+	case msgDoctorLoaded:
+		if m.modal == modalDoctor {
+			m.doctorState.loading = false
+			m.doctorState.report = msg.report
+			if msg.err != nil {
+				m.doctorState.errMsg = msg.err.Error()
+			}
+		}
+		return m, nil
 
 	case msgDetailLoaded:
 		if sel := m.selected(); sel != nil && sel.db.Name == msg.name && m.activeTab == msg.tab {
@@ -498,6 +563,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.setToast(msg.err.Error(), true)
 			}
 			m.tableDetail = msg.detail
+			if m.tableDetail != nil && m.explorerRowCursor >= len(m.tableDetail.previewRows) {
+				m.explorerRowCursor = max(0, len(m.tableDetail.previewRows)-1)
+			}
 			m.renderTableDetailToVP()
 		}
 		return m, nil

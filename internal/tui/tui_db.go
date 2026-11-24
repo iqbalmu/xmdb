@@ -29,6 +29,12 @@ type tableDetail struct {
 	previewCols []string
 	previewRows [][]string
 	rawText     string
+	totalRows   int64
+	page        int
+	pageSize    int
+	filter      string
+	sortCol     string
+	sortDesc    bool
 }
 
 type tableColumnInfo struct {

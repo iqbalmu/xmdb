@@ -161,21 +161,27 @@ Running `xmdb` without arguments opens the terminal dashboard:
 
 - **Left pane**: databases grouped by group name (collapsible with `Enter`/`Space`),
   live running status, and `/` filter.
-- **Right pane**: four tabs (`1`-`4`, `[`/`]`, or `Tab`):
+- **Right pane**: four adaptive tabs (`1`-`4`, `[`/`]`, or `Tab`):
   - `1` **Info**: container status, host/port, credentials (`p` toggles password
-    visibility, `c` copies connection string).
+    visibility, `c` copies connection string), plus **Live Container Metrics**
+    (CPU %, Memory bar, uptime, active connections, and snapshot count).
   - `2` **Logs**: live container logs (`f` toggles auto-follow, `/` searches
     logs, `n`/`N` jumps between matches).
-  - `3` **Tables**: browse tables in an interactive 2D ERD diagram (default) or
-    list view (`v` toggles diagram/list, `f` toggles fields, `/` filters tables,
-    `+`/`-`/`0` zooms, `Shift+arrows` pans, `Enter` inspects schema and rows,
-    `Q` jumps to Query tab with `SELECT * FROM <table> LIMIT 50;`).
-  - `4` **Query**: press `i` or `Enter` to write and execute SQL inline
-    (`↑`/`↓` browses persistent query history, `e` exports results to CSV/JSON,
-    `c` copies results as JSON).
-- **Actions**: `s` start/stop database or group, `n` create database, `C` clone
-  database, `x` open SQL shell, `b` backup, `L` restore, `R` reset, `d` remove,
-  `r` refresh, `?` show all shortcuts, `q` quit.
+  - `3` **Tables / Keys / Collections**: SQL engines show an interactive 2D ERD
+    diagram or list view (`v` toggles diagram/list, `f` toggles fields, `/`
+    filters, `+`/`-`/`0` zooms, `Shift+arrows` pans) plus a **Read-First Data
+    Explorer** (`Enter` explores rows with `,`/`.` pagination, `W` quick
+    `WHERE`/JSON filter, `o` column sort, and `Enter` **Row/JSON Inspector**).
+    Redis/Valkey show scanned **Keys** with type/TTL/value preview; MongoDB
+    shows **Collections** with paginated JSON documents.
+  - `4` **Query / Console**: press `i` or `Enter` to run SQL, Redis/Valkey
+    commands, or MongoDB expressions inline (`↑`/`↓` history, `Ctrl+S`/`Ctrl+O`
+    saved snippets, `E` quick `EXPLAIN`, SQL syntax highlighting preview, `e`
+    export CSV/JSON, `c` copy results).
+- **Actions & Modals**: `Ctrl+P` Command Palette, `S` Snapshots modal, `D`
+  Doctor diagnostics & quick-fix, `E` Edit (rename/move group), `s` start/stop
+  database or group, `n` create database, `C` clone, `x` open shell, `b` backup,
+  `L` restore, `R` reset, `d` remove, `r` refresh, `?` help, `q` quit.
 
 ## Commands
 

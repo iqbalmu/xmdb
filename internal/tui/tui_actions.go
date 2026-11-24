@@ -123,8 +123,12 @@ func loadDetailCmd(runtimeMode string, entry *dbEntry, tab int) tea.Cmd {
 }
 
 func loadTableDetailCmd(runtimeMode string, db *state.Database, tableName string) tea.Cmd {
+	return loadTableDetailWithOptsCmd(runtimeMode, db, tableName, tableExplorerOpts{PageSize: defaultExplorerPageSize})
+}
+
+func loadTableDetailWithOptsCmd(runtimeMode string, db *state.Database, tableName string, opts tableExplorerOpts) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := fetchTableDetail(context.Background(), runtimeMode, db, tableName)
+		detail, err := fetchTableDetailWithOpts(context.Background(), runtimeMode, db, tableName, opts)
 		return msgTableDetailLoaded{dbName: db.Name, detail: detail, err: err}
 	}
 }

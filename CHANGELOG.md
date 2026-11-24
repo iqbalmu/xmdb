@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-11-24
+
+### Added
+- **Live Container Metrics (Info Tab)**: non-blocking CPU %, Memory usage/limit bars, uptime, active connections (PostgreSQL/MySQL/MariaDB/Redis/Valkey), and snapshot counts auto-refreshed on the dashboard.
+- **Read-First Data Explorer**: pagination (`,`/`.`, 50 rows/page with total row count), quick `WHERE` / MongoDB JSON filter (`W`), column sort cycling (`o`), and a **Row / JSON Inspector Modal** (`Enter` on any row, with auto-pretty-printed JSON/JSONB and `c` copy).
+- **Query Editor Upgrade**: persistent saved queries & snippets (`~/.xmdb/queries.json`, `Ctrl+S` save / `Ctrl+O` picker), lightweight SQL syntax highlighting preview, and one-key `EXPLAIN` / `EXPLAIN (ANALYZE, BUFFERS)` (`E`).
+- **TUI Management Modals & Command Palette**:
+  - **Snapshots Modal (`S`)**: create, rollback, delete, and clone-from-snapshot inside the dashboard.
+  - **Doctor Overlay (`D`)**: inspect runtime, orphan resources, stale states, and port conflicts with one-key quick-fix (`F`).
+  - **Edit DB Modal (`E`)**: rename database and/or move group directly in TUI.
+  - **Command Palette (`Ctrl+P`)**: searchable action menu for every dashboard workflow.
+
 ## [1.7.0] - 2026-11-24
 
 ### Added
