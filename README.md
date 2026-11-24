@@ -73,7 +73,7 @@ sha256 checksum, and installs it. Defaults to `/usr/local/bin` (falls back to
 `~/.local/bin` without sudo access); both are overridable:
 
 ```sh
-XMDB_INSTALL_DIR=~/.local/bin VERSION=v1.5.0 sh install.sh
+XMDB_INSTALL_DIR=~/.local/bin VERSION=v2.0.0 sh install.sh
 ```
 
 Re-running the installer (or running `xmdb update`) upgrades to the latest release.
